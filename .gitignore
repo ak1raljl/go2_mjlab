@@ -1,0 +1,16 @@
+*.egg-info
+.venv*
+.idea
+outputs
+logs
+MUJOCO_LOG.TXT
+**/__pycache__
+*/__pycache__
+AGENTS.md
+CLAUDE.md
+*.mp4
+.codex
+.zcf
+.claude
+.agents
+.vscode
