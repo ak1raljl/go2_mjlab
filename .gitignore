@@ -3,6 +3,7 @@
 .idea
 outputs
 logs
+thirdparty
 MUJOCO_LOG.TXT
 **/__pycache__
 */__pycache__
@@ -14,3 +15,5 @@ CLAUDE.md
 .claude
 .agents
 .vscode
+.aws
+docs

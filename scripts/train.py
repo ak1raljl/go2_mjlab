@@ -98,7 +98,8 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     if rank == 0:
         print(f"[INFO] Logging experiment in directory: {log_dir}")
 
-    env = ManagerBasedRlEnv(
+    env_cls = getattr(cfg.env, "class_type", ManagerBasedRlEnv)
+    env = env_cls(
         cfg=cfg.env, device=device, render_mode="rgb_array" if cfg.video else None
     )
 

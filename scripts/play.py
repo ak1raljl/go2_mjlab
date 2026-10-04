@@ -1,313 +1,312 @@
-"""Replay a Unitree Go2 PIE checkpoint in MJLab."""
-
-# ruff: noqa: E402 -- ensure this repository wins over other editable `src` packages.
+"""Play a velocity-controlled AMP policy with pygame keyboard commands."""
 
 from __future__ import annotations
 
 import os
 import sys
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+# Prefer the repository's RSL-RL implementation over an installed package with
+# the same import name when this script is executed as ``python scripts/play_amp.py``.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import mjlab
 import numpy as np
 import torch
 import tyro
 
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
 from mjlab.envs import ManagerBasedRlEnv
-from mjlab.managers.event_manager import EventTermCfg
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
-from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+from mjlab.rl.exporter_utils import attach_metadata_to_onnx, get_base_metadata
+from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.utils.torch import configure_torch_backends
+from mjlab.utils.wrappers import VideoRecorder
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 
 
-TASK_ID = "Unitree-Go2-PIE"
+_PYGAME: Any | None = None
 
 
-def _network_depth_for_display(
-    env: ManagerBasedRlEnv,
-    env_idx: int,
-    group_name: str,
-    term_name: str,
-) -> torch.Tensor:
-    """Return one environment's exact network-depth tensor as ``(C, H, W)``."""
-    obs_buf = env.obs_buf
-    if group_name not in obs_buf:
-        raise ValueError(
-            f"Network-depth observation group {group_name!r} is unavailable; "
-            f"available groups: {tuple(obs_buf)}."
-        )
-    depth = obs_buf[group_name]
-    if isinstance(depth, dict):
-        if term_name not in depth:
-            raise ValueError(
-                f"Network-depth group {group_name!r} has no term {term_name!r}."
-            )
-        depth = depth[term_name]
-    if not isinstance(depth, torch.Tensor):
-        raise TypeError(
-            f"Network-depth observation must be a tensor, got {type(depth).__name__}."
-        )
-    if env_idx < 0 or env_idx >= depth.shape[0]:
-        raise IndexError(
-            f"Network-depth env index {env_idx} is outside batch size {depth.shape[0]}."
-        )
-    if depth.ndim == 4:
-        return depth[env_idx]
-    if depth.ndim != 2:
-        raise ValueError(
-            "Expected network depth with shape (N,C,H,W) or flattened (N,D), "
-            f"got {tuple(depth.shape)}."
-        )
-
-    term_cfg = env.observation_manager.get_term_cfg(group_name, term_name)
-    params = term_cfg.params
-    history_length = int(
-        params.get("frame_history_length", max(1, int(term_cfg.history_length)))
-    )
-    sensor_name = params.get("sensor_name")
-    if not isinstance(sensor_name, str):
-        raise ValueError(
-            f"Network-depth term {group_name!r}/{term_name!r} has no sensor_name."
-        )
-    sensor = env.scene[sensor_name]
-    height = int(sensor.cfg.height)
-    width = int(sensor.cfg.width)
-
-    crop_region = params.get("crop_region")
-    if crop_region is not None:
-        crop_up, crop_down, crop_left, crop_right = crop_region
-        height -= int(crop_up) + int(crop_down)
-        width -= int(crop_left) + int(crop_right)
-    else:
-        height -= int(params.get("crop_up", 0)) + int(params.get("crop_down", 0))
-        width -= int(params.get("crop_left", 0)) + int(params.get("crop_right", 0))
-
-    expected_size = history_length * height * width
-    if height <= 0 or width <= 0 or depth.shape[-1] != expected_size:
-        raise ValueError(
-            f"Cannot reshape network depth {tuple(depth.shape)} as "
-            f"({history_length}, {height}, {width}); expected {expected_size} values."
-        )
-    return depth[env_idx].reshape(history_length, height, width)
+def _load_pygame() -> Any:
+    """Import pygame only when keyboard playback is requested."""
+    global _PYGAME
+    if _PYGAME is None:
+        try:
+            import pygame
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Keyboard playback requires pygame. Install it with `pip install pygame`."
+            ) from exc
+        _PYGAME = pygame
+    return _PYGAME
 
 
-class NetworkDepthViserPlayViewer(ViserPlayViewer):
-    """Viser playback with the newest exact policy-depth frame."""
+def get_keyboard_command(
+    keys: Any,
+    cmd_limits: np.ndarray,
+    pygame_module: Any | None = None,
+) -> np.ndarray:
+    """Convert the W/S, A/D and Q/E key states to a velocity command.
+
+    The command layout is ``[linear_x, linear_y, angular_z]``.  Each key uses
+    the corresponding lower or upper limit, matching ``deploy_go2.py``.
+    """
+    pygame = pygame_module if pygame_module is not None else _load_pygame()
+
+    if cmd_limits.shape != (3, 2):
+        raise ValueError(f"Expected command limits with shape (3, 2), got {cmd_limits.shape}.")
+
+    cmd_x = 0.0
+    cmd_y = 0.0
+    cmd_yaw = 0.0
+    if keys[pygame.K_w]:
+        cmd_x += cmd_limits[0, 1]
+    if keys[pygame.K_s]:
+        cmd_x += cmd_limits[0, 0]
+    if keys[pygame.K_a]:
+        cmd_y += cmd_limits[1, 1]
+    if keys[pygame.K_d]:
+        cmd_y += cmd_limits[1, 0]
+    if keys[pygame.K_q]:
+        cmd_yaw += cmd_limits[2, 1]
+    if keys[pygame.K_e]:
+        cmd_yaw += cmd_limits[2, 0]
+    # cmd_x = 2.0
+    return np.array([cmd_x, cmd_y, cmd_yaw], dtype=np.float32)
+
+
+class KeyboardController:
+    """Poll pygame and expose the current keyboard velocity command."""
+
+    def __init__(self, cmd_limits: np.ndarray) -> None:
+        self._pygame = _load_pygame()
+        self._cmd_limits = cmd_limits
+        self._pygame.init()
+        self._screen = self._pygame.display.set_mode((200, 100))
+        self._pygame.display.set_caption("AMP Keyboard Control")
+        print("Keyboard control: W/S=vx, A/D=vy, Q/E=yaw")
+
+    def read(self) -> np.ndarray:
+        self._pygame.event.pump()
+        keys = self._pygame.key.get_pressed()
+        return get_keyboard_command(keys, self._cmd_limits, self._pygame)
+
+    def close(self) -> None:
+        self._pygame.quit()
+
+
+class KeyboardCommandEnv:
+    """Inject the keyboard command before each policy observation."""
 
     def __init__(
         self,
-        env,
-        policy,
-        network_depth_group: str = "camera",
-        network_depth_term: str = "front_depth",
+        env: RslRlVecEnvWrapper,
+        keyboard: KeyboardController,
+        command_name: str,
     ) -> None:
-        self._network_depth_group = network_depth_group
-        self._network_depth_term = network_depth_term
-        super().__init__(env, policy)
+        self._env = env
+        self._keyboard = keyboard
+        self._command = env.unwrapped.command_manager.get_command(command_name)
 
-    def setup(self) -> None:
-        super().setup()
-        depth = self._get_network_depth()
-        channels, height, width = depth.shape
-        self._network_depth_display_scale = max(1, 256 // width)
-        display_height = height * self._network_depth_display_scale
-        display_width = width * self._network_depth_display_scale
-
-        with self._server.gui.add_folder("Policy Network Depth"):
-            self._server.gui.add_markdown(
-                "Newest channel of the exact policy input after cropping, invalid "
-                "sample handling, Gaussian blur, and normalization."
+        if self._command is None:
+            raise ValueError(f"Command '{command_name}' is not available in the environment.")
+        if self._command.ndim != 2 or self._command.shape[1] != 3:
+            raise ValueError(
+                f"Keyboard control expects a 3D velocity command, got {tuple(self._command.shape)}."
             )
-            self._network_depth_handle = self._server.gui.add_image(
-                image=np.zeros((display_height, display_width, 3), dtype=np.uint8),
-                label=(
-                    f"{self._network_depth_group} newest ({height}×{width}, "
-                    f"channel {channels}/{channels})"
-                ),
-                format="png",
-            )
-        self._update_network_depth_image()
 
-    def _get_network_depth(self) -> torch.Tensor:
-        return _network_depth_for_display(
-            self.env.unwrapped,
-            int(self._scene.env_idx),
-            self._network_depth_group,
-            self._network_depth_term,
+    @property
+    def num_envs(self) -> int:
+        return self._env.num_envs
+
+    @property
+    def device(self) -> torch.device:
+        return self._env.device
+
+    @property
+    def cfg(self) -> Any:
+        return self._env.cfg
+
+    @property
+    def unwrapped(self) -> Any:
+        return self._env.unwrapped
+
+    def _update_command(self) -> None:
+        command = torch.as_tensor(
+            self._keyboard.read(), device=self._command.device, dtype=self._command.dtype
         )
+        self._command.copy_(command.unsqueeze(0).expand_as(self._command))
 
-    def _update_network_depth_image(self) -> None:
-        depth = self._get_network_depth().detach().float().clamp(0.0, 1.0)
-        newest = (depth[-1].cpu().numpy() * 255.0).astype(np.uint8)
-        if self._network_depth_display_scale > 1:
-            newest = np.repeat(
-                np.repeat(newest, self._network_depth_display_scale, axis=0),
-                self._network_depth_display_scale,
-                axis=1,
-            )
-        self._network_depth_handle.image = np.repeat(newest[..., None], 3, axis=-1)
+    def initialize(self) -> None:
+        """Replace the reset-time random command in the observation cache."""
+        self._update_command()
+        self._env.unwrapped.observation_manager.compute(update_history=True)
 
-    def sync_env_to_viewer(self) -> None:
-        super().sync_env_to_viewer()
-        self._update_network_depth_image()
+    def get_observations(self) -> Any:
+        self._update_command()
+        return self._env.get_observations()
 
+    def step(self, actions: torch.Tensor) -> Any:
+        return self._env.step(actions)
 
-def _set_play_terrain_origin(
-    env: ManagerBasedRlEnv,
-    env_ids: torch.Tensor | slice | None,
-    terrain_level: int,
-) -> None:
-    """Select a fixed generated-terrain difficulty row for play resets."""
-    terrain = env.scene.terrain
-    if terrain is None or terrain.terrain_origins is None:
-        return
+    def reset(self) -> Any:
+        result = self._env.reset()
+        self.initialize()
+        return result
 
-    device = terrain.terrain_levels.device
-    if env_ids is None or isinstance(env_ids, slice):
-        env_ids = torch.arange(env.num_envs, device=device, dtype=torch.long)
-    else:
-        env_ids = env_ids.to(device=device, dtype=torch.long)
+    def close(self) -> None:
+        self._env.close()
 
-    num_rows, num_cols = terrain.terrain_origins.shape[:2]
-    if terrain_level < 0 or terrain_level >= num_rows:
-        raise ValueError(
-            f"terrain_level={terrain_level} is out of range [0, {num_rows - 1}]"
-        )
-    levels = torch.full(
-        (len(env_ids),), terrain_level, device=device, dtype=torch.long
-    )
-    types = torch.randint(0, num_cols, (len(env_ids),), device=device)
-    terrain.terrain_levels[env_ids] = levels
-    terrain.terrain_types[env_ids] = types
-    terrain.env_origins[env_ids] = terrain.terrain_origins[levels, types]
-
-
-def _configure_play_terrain_level(env_cfg, terrain_level: int | None) -> None:
-    """Configure deterministic difficulty rows before creating the play scene."""
-    if terrain_level is None:
-        return
-
-    terrain_cfg = env_cfg.scene.terrain
-    terrain_generator = None if terrain_cfg is None else terrain_cfg.terrain_generator
-    if terrain_generator is None:
-        raise ValueError("--terrain-level requires a generated terrain.")
-
-    terrain_generator.curriculum = True
-    terrain_generator.num_rows = max(terrain_generator.num_rows, 10)
-    if terrain_level < 0 or terrain_level >= terrain_generator.num_rows:
-        raise ValueError(
-            f"terrain_level={terrain_level} is out of range "
-            f"[0, {terrain_generator.num_rows - 1}]"
-        )
-
-    terrain_generator.sub_terrains = {
-        name: replace(sub_cfg, proportion=1.0)
-        for name, sub_cfg in terrain_generator.sub_terrains.items()
-    }
-    terrain_generator.num_cols = len(terrain_generator.sub_terrains)
-
-    env_cfg.events.pop("randomize_terrain", None)
-    env_cfg.events = {
-        "select_terrain": EventTermCfg(
-            func=_set_play_terrain_origin,
-            mode="reset",
-            params={"terrain_level": terrain_level},
-        ),
-        **env_cfg.events,
-    }
-    print(f"[INFO] Play terrain selection: fixed level={terrain_level}")
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._env, name)
 
 
 @dataclass(frozen=True)
 class PlayConfig:
-    checkpoint_file: str
-    num_envs: int = 1
+    """Configuration for keyboard-controlled AMP playback."""
+
+    checkpoint_file: str | None = None
+    command_name: str = "twist"
+    num_envs: int | None = None
     device: str | None = None
+    video: bool = False
+    video_length: int = 200
+    video_height: int | None = None
+    video_width: int | None = None
     viewer: Literal["auto", "native", "viser"] = "auto"
-    no_terminations: bool = False
-    terrain_level: int | None = None
-    """Fixed generated-terrain difficulty row for play resets."""
-    network_depth_vis: bool = False
-    """Show the newest exact network-depth input in the Viser GUI."""
-    network_depth_group: str = "camera"
-    """Observation group containing the policy depth input."""
-    network_depth_term: str = "front_depth"
-    """Observation term containing the policy depth input."""
+    no_terminations: bool = True
 
 
-def run_play(cfg: PlayConfig) -> None:
+def _keyboard_command_limits(env_cfg: Any, command_name: str) -> np.ndarray:
+    command_cfg = env_cfg.commands.get(command_name)
+    if not isinstance(command_cfg, UniformVelocityCommandCfg):
+        raise ValueError(
+            f"Command '{command_name}' must be UniformVelocityCommandCfg for keyboard control."
+        )
+
+    # Disable all automatic command changes.  The command is updated by
+    # KeyboardCommandEnv immediately before observations are computed.
+    command_cfg.resampling_time_range = (1.0e9, 1.0e9)
+    command_cfg.rel_standing_envs = 0.0
+    command_cfg.heading_command = False
+    command_cfg.ranges.heading = None
+
+    ranges = command_cfg.ranges
+    return np.asarray(
+        [ranges.lin_vel_x, ranges.lin_vel_y, ranges.ang_vel_z], dtype=np.float32
+    )
+
+
+def _resolve_viewer(viewer: str) -> Literal["native", "viser"]:
+    if viewer == "auto":
+        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        return "native" if has_display else "viser"
+    if viewer == "native":
+        return "native"
+    if viewer == "viser":
+        return "viser"
+    raise ValueError(f"Unsupported viewer backend: {viewer}")
+
+
+def run_play(task_id: str, cfg: PlayConfig) -> None:
     configure_torch_backends()
-    checkpoint = Path(cfg.checkpoint_file).expanduser().resolve()
-    if not checkpoint.is_file():
-        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint}")
-    if cfg.num_envs <= 0:
-        raise ValueError("--num-envs must be positive.")
 
-    import mjlab.tasks  # noqa: F401
-    import src.tasks  # noqa: F401
+    if cfg.checkpoint_file is None:
+        raise ValueError("AMP playback requires --checkpoint-file.")
+    checkpoint_path = Path(cfg.checkpoint_file).expanduser().resolve()
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
 
     device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    env_cfg = load_env_cfg(TASK_ID, play=True)
-    agent_cfg = load_rl_cfg(TASK_ID)
-    env_cfg.scene.num_envs = cfg.num_envs
-    _configure_play_terrain_level(env_cfg, cfg.terrain_level)
+    env_cfg = load_env_cfg(task_id, play=True)
+    agent_cfg = load_rl_cfg(task_id)
+
     if cfg.no_terminations:
         env_cfg.terminations = {}
+        print("[INFO] Terminations disabled")
+    if cfg.num_envs is not None:
+        env_cfg.scene.num_envs = cfg.num_envs
+    if cfg.video_height is not None:
+        env_cfg.viewer.height = cfg.video_height
+    if cfg.video_width is not None:
+        env_cfg.viewer.width = cfg.video_width
 
-    env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
-    wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    cmd_limits = _keyboard_command_limits(env_cfg, cfg.command_name)
+    render_mode = "rgb_array" if cfg.video else None
+    env_cls = getattr(env_cfg, "class_type", ManagerBasedRlEnv)
+    env: Any = env_cls(cfg=env_cfg, device=device, render_mode=render_mode)
+
+    log_dir = checkpoint_path.parent
+    if cfg.video:
+        env = VideoRecorder(
+            env,
+            video_folder=log_dir / "videos" / "play_amp",
+            step_trigger=lambda step: step == 0,
+            video_length=cfg.video_length,
+            disable_logger=True,
+        )
+
+    vec_env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
+    runner = runner_cls(vec_env, asdict(agent_cfg), device=device)
+    runner.load(
+        str(checkpoint_path), load_cfg={"actor": True}, strict=True, map_location=device
+    )
+    policy = runner.get_inference_policy(device=device)
+
+    onnx_path = log_dir / "policy.onnx"
+    runner.export_policy_to_onnx(str(log_dir), filename="policy.onnx")
+    actor_obs_cfg = env_cfg.observations["actor"]
+    metadata = get_base_metadata(vec_env.unwrapped, str(log_dir))
+    metadata.update(
+        {
+            "observation_history_layout": (
+                "term-major" if actor_obs_cfg.flatten_history_dim else "frame-major"
+            ),
+            "observation_history_length": str(actor_obs_cfg.history_length),
+        }
+    )
+    attach_metadata_to_onnx(str(onnx_path), metadata)
+    print(f"[INFO] Exported ONNX policy to {onnx_path}")
+
+    keyboard = KeyboardController(cmd_limits)
+    keyboard_env = KeyboardCommandEnv(vec_env, keyboard, cfg.command_name)
+    keyboard_env.initialize()
+    resolved_viewer = _resolve_viewer(cfg.viewer)
+
     try:
-        runner_cls = load_runner_cls(TASK_ID) or MjlabOnPolicyRunner
-        runner = runner_cls(wrapped, asdict(agent_cfg), device=device)
-        runner.load(
-            str(checkpoint),
-            load_cfg={"actor": True},
-            strict=True,
-            map_location=device,
-        )
-        policy = runner.get_inference_policy(device=device)
-
-        viewer = cfg.viewer
-        if viewer == "auto":
-            has_display = bool(
-                os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-            )
-            viewer = "native" if has_display else "viser"
-        if cfg.network_depth_vis and viewer != "viser":
-            raise ValueError("--network-depth-vis requires --viewer viser.")
-
-        print(
-            f"[INFO] task={TASK_ID}, checkpoint={checkpoint}, "
-            f"device={device}, viewer={viewer}"
-        )
-        if viewer == "native":
-            NativeMujocoViewer(wrapped, policy).run()
-        elif cfg.network_depth_vis:
-            print(
-                "[INFO] Viser network-depth visualization enabled: "
-                f"group={cfg.network_depth_group}, term={cfg.network_depth_term}"
-            )
-            NetworkDepthViserPlayViewer(
-                wrapped,
-                policy,
-                network_depth_group=cfg.network_depth_group,
-                network_depth_term=cfg.network_depth_term,
-            ).run()
+        if resolved_viewer == "native":
+            NativeMujocoViewer(keyboard_env, policy).run()
         else:
-            ViserPlayViewer(wrapped, policy).run()
+            ViserPlayViewer(keyboard_env, policy).run()
     finally:
-        env.close()
+        keyboard.close()
+        keyboard_env.close()
 
 
 def main() -> None:
-    run_play(tyro.cli(PlayConfig))
+    # Import tasks to populate the registry before tyro validates task choices.
+    import mjlab.tasks  # noqa: F401
+    import src.tasks  # noqa: F401
+
+    all_tasks = list_tasks()
+    chosen_task, remaining_args = tyro.cli(
+        tyro.extras.literal_type_from_choices(all_tasks),
+        add_help=False,
+        return_unknown_args=True,
+        config=mjlab.TYRO_FLAGS,
+    )
+    args = tyro.cli(
+        PlayConfig,
+        args=remaining_args,
+        default=PlayConfig(),
+        prog=sys.argv[0] + f" {chosen_task}",
+        config=mjlab.TYRO_FLAGS,
+    )
+    run_play(chosen_task, args)
 
 
 if __name__ == "__main__":
