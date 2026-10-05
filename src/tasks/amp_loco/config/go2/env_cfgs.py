@@ -97,10 +97,10 @@ def _unitree_go2_amp_loco_base_env_cfg(
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.5,
   }
 
-  cfg.rewards["foot_gait"].params["offset"] = [0.0, 0.5, 0.5, 0.0]
+  # cfg.rewards["foot_gait"].params["offset"] = [0.0, 0.5, 0.5, 0.0]
   cfg.rewards["body_orientation_l2"].params["asset_cfg"].body_names = ("base_link",)
   cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)
-  cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
+  # cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
@@ -155,9 +155,9 @@ def unitree_go2_amp_loco_env_cfg(play: bool = False) -> AmpLocoEnvCfg:
   cfg.scene.terrain.terrain_generator = None
 
   # Remove raycast sensor and height scan (no terrain to scan).
-  # cfg.scene.sensors = tuple(
-  #   s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
-  # )
+  cfg.scene.sensors = tuple(
+    s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
+  )
   # del cfg.observations["actor"].terms["height_scan"]
   # del cfg.observations["critic"].terms["height_scan"]
 

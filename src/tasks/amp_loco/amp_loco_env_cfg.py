@@ -184,7 +184,7 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
       heading_control_stiffness=0.5,
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
-        lin_vel_x=(-1.0, 2.0),
+        lin_vel_x=(-1.0, 3.0),
         lin_vel_y=(-1.0, 1.0),
         ang_vel_z=(-1.0, 1.0),
         heading=(-math.pi, math.pi),
@@ -317,28 +317,28 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight=-2.5e-7),
     "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-10.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.05),
-    "foot_gait": RewardTermCfg(
-      func=mdp.feet_gait,
-      weight=0.5,
-      params={
-        "period": 0.6,
-        "offset": [0.0, 0.5],
-        "threshold": 0.56,
-        "command_threshold": 0.1,
-        "command_name": "twist",
-        "sensor_name": "feet_ground_contact",
-      }
-    ),
-    "foot_clearance": RewardTermCfg(
-      func=mdp.feet_clearance,
-      weight=-1.0,
-      params={
-        "target_height": 0.10,
-        "command_name": "twist",
-        "command_threshold": 0.1,
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
-    ),
+    # "foot_gait": RewardTermCfg(
+    #   func=mdp.feet_gait,
+    #   weight=0.5,
+    #   params={
+    #     "period": 0.6,
+    #     "offset": [0.0, 0.5],
+    #     "threshold": 0.56,
+    #     "command_threshold": 0.1,
+    #     "command_name": "twist",
+    #     "sensor_name": "feet_ground_contact",
+    #   }
+    # ),
+    # "foot_clearance": RewardTermCfg(
+    #   func=mdp.feet_clearance,
+    #   weight=-1.0,
+    #   params={
+    #     "target_height": 0.10,
+    #     "command_name": "twist",
+    #     "command_threshold": 0.1,
+    #     "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+    #   },
+    # ),
     "foot_slip": RewardTermCfg(
       func=mdp.feet_slip,
       weight=-0.25,
@@ -395,8 +395,8 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
       params={
         "command_name": "twist",
         "velocity_stages": [
-          {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
-          {"step": 5000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0)},
+          {"step": 0, "lin_vel_x": (-0.5, 2.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
+          {"step": 3000 * 24, "lin_vel_x": (-1.0, 3.0), "lin_vel_y": (-1.0, 1.0)},
         ],
       },
     ),
@@ -413,7 +413,7 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
         terrain_generator=replace(ROUGH_TERRAINS_CFG),
         max_init_terrain_level=5,
       ),
-      sensors=(terrain_scan,),
+      # sensors=(terrain_scan,),
       num_envs=1,
       extent=2.0,
     ),
