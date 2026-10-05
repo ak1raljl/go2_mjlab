@@ -10,10 +10,9 @@ from src.tasks.amp_loco.rl.motion_loader import Go2MotionLoader, JOINT_NAMES
 class AmpLocoEnv(ManagerBasedRlEnv):
   def load_managers(self):
     robot = self.scene["robot"]
-    ids, names = robot.find_joints(JOINT_NAMES, preserve_order=True)
+    _, names = robot.find_joints(JOINT_NAMES, preserve_order=True)
     if tuple(names) != JOINT_NAMES or tuple(robot.joint_names) != JOINT_NAMES:
       raise ValueError("AMP policy actions and NPZ data require FL/FR/RL/RR joint order")
-    self.amp_joint_ids = ids
     self.motion_dataset = Go2MotionLoader(self.cfg.motion, self.step_dt, self.device)
     self.amp_body_ids, body_names = robot.find_bodies(
       self.motion_dataset.body_names, preserve_order=True,

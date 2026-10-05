@@ -32,8 +32,6 @@ from src.tasks.amp_loco.rl.motion_loader import MotionCfg
 @dataclass(kw_only=True)
 class AmpLocoEnvCfg(ManagerBasedRlEnvCfg):
   motion: MotionCfg = field(default_factory=MotionCfg)
-  reference_init_probability: float = 1.0
-  reference_height_offset: float = 0.0  # Set per-robot.
 
   @property
   def class_type(self):
@@ -201,21 +199,17 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
       func=mdp.reset_root_state_uniform,
       mode="reset",
       params={
-        "pose_range": {
-          "x": (-0.5, 0.5),
-          "y": (-0.5, 0.5),
-          "z": (0.0, 0.0),
-          "yaw": (-3.14, 3.14),
+        "pose_range": {},
+        "velocity_range": {
+          key: (-0.5, 0.5) for key in ("x", "y", "z", "roll", "pitch", "yaw")
         },
-        "velocity_range": {},
       },
     ),
     "reset_robot_joints": EventTermCfg(
-      func=mdp.reset_joints_by_offset,
+      func=mdp.reset_joints_by_scale,
       mode="reset",
       params={
-        "position_range": (-0.0, 0.0),
-        "velocity_range": (-0.0, 0.0),
+        "position_range": (0.5, 1.5),
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
@@ -267,9 +261,6 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
     ),
   }
 
-  # Run after the default root/joint resets and retain their randomized pose.
-  events["reference_init"] = EventTermCfg(func=mdp.reset_reference_state, mode="reset")
-
   ##
   # Rewards
   ##
@@ -277,7 +268,7 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
-      weight=1.0,
+      weight=2.0,
       params={"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "track_angular_velocity": RewardTermCfg(
@@ -395,8 +386,8 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
       params={
         "command_name": "twist",
         "velocity_stages": [
-          {"step": 0, "lin_vel_x": (-0.5, 2.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
-          {"step": 3000 * 24, "lin_vel_x": (-1.0, 3.0), "lin_vel_y": (-1.0, 1.0)},
+          {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
+          {"step": 3000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0)},
         ],
       },
     ),

@@ -69,3 +69,10 @@ def unitree_go2_amp_loco_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     num_steps_per_env=24,
     max_iterations=10001,
   )
+
+
+def unitree_go2_amp_rough_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """Use independent rough logs/checkpoints with the same AMP/PPO settings."""
+  cfg = unitree_go2_amp_loco_runner_cfg()
+  cfg.experiment_name = "go2_amp_rough"
+  return cfg

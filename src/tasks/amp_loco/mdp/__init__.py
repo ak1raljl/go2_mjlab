@@ -4,4 +4,4 @@ from .curriculums import *  # noqa: F403
 from .observations import *  # noqa: F403
 from .rewards import *  # noqa: F403
 from .terminations import *  # noqa: F403
-from .events import reset_reference_state
+from .events import reset_joints_by_scale

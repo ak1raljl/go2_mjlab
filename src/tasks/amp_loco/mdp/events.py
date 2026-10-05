@@ -1,32 +1,30 @@
-"""Reference-state initialization, independent of the velocity task."""
+"""Randomized joint resets following amp_go2's ordinary reset path."""
 
 import torch
-from mjlab.utils.lab_api.math import quat_apply, quat_conjugate, quat_mul
+from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.utils.lab_api.math import sample_uniform
 
 
-def reset_reference_state(env, env_ids):
-  """Apply expert states while retaining the preceding reset's position and rotation."""
+def reset_joints_by_scale(
+  env,
+  env_ids,
+  position_range: tuple[float, float],
+  asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+  """Scale default joint angles independently and reset joint velocities to zero."""
   if env_ids is None:
     env_ids = torch.arange(env.num_envs, device=env.device)
-  elif isinstance(env_ids, slice):
-    env_ids = torch.arange(env.num_envs, device=env.device)[env_ids]
-  probability = env.cfg.reference_init_probability
-  if not 0.0 <= probability <= 1.0:
-    raise ValueError("reference_init_probability must be in [0, 1]")
-  selected = env_ids[torch.rand(len(env_ids), device=env.device) < probability]
-  if len(selected) == 0:
-    return
-  root, q, qd = env.motion_dataset.sample_reference(len(selected))
-  robot = env.scene["robot"]
-  default_root = robot.data.default_root_state
-  assert default_root is not None
-  # Read qpos directly: link poses are stale until the reset's forward pass.
-  reset_pose = env.sim.data.qpos[selected[:, None], robot.indexing.free_joint_q_adr]
-  rotation = quat_mul(reset_pose[:, 3:7], quat_conjugate(default_root[selected, 3:7]))
-  root[:, :2] = reset_pose[:, :2]
-  root[:, 2] += reset_pose[:, 2] - default_root[selected, 2] + env.cfg.reference_height_offset
-  root[:, 3:7] = quat_mul(rotation, root[:, 3:7])
-  root[:, 7:10] = quat_apply(rotation, root[:, 7:10])
-  root[:, 10:13] = quat_apply(rotation, root[:, 10:13])
-  robot.write_root_state_to_sim(root, env_ids=selected)
-  robot.write_joint_state_to_sim(q, qd, joint_ids=env.amp_joint_ids, env_ids=selected)
+  robot = env.scene[asset_cfg.name]
+  default_pos = robot.data.default_joint_pos
+  limits = robot.data.soft_joint_pos_limits
+  assert default_pos is not None and limits is not None
+  joint_pos = default_pos[env_ids][:, asset_cfg.joint_ids].clone()
+  joint_pos *= sample_uniform(*position_range, joint_pos.shape, env.device)
+  joint_limits = limits[env_ids][:, asset_cfg.joint_ids]
+  joint_pos.clamp_(joint_limits[..., 0], joint_limits[..., 1])
+  robot.write_joint_state_to_sim(
+    joint_pos,
+    torch.zeros_like(joint_pos),
+    joint_ids=asset_cfg.joint_ids,
+    env_ids=env_ids,
+  )

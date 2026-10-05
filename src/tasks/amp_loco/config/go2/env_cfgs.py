@@ -1,4 +1,4 @@
-"""Independent Go2 AMP configuration aligned with flat velocity settings."""
+"""Independent Go2 AMP configurations for flat and rough terrain."""
 
 from copy import deepcopy
 
@@ -7,12 +7,15 @@ from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
-from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
+from mjlab.managers.observation_manager import ObservationTermCfg
+from mjlab.sensor import ContactMatch, ContactSensorCfg, GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from mjlab.terrains import TerrainEntityCfg
 
 from src.tasks.amp_loco import mdp
 from src.tasks.amp_loco.amp_loco_env_cfg import AmpLocoEnvCfg, make_amp_loco_env_cfg
 from src.tasks.amp_loco.rl.motion_loader import MotionCfg
+from .terrains import make_amp_rough_terrains_cfg
 
 
 def _unitree_go2_amp_loco_base_env_cfg(
@@ -25,6 +28,13 @@ def _unitree_go2_amp_loco_base_env_cfg(
   cfg.sim.contact_sensor_maxmatch = 500
 
   cfg.scene.entities = {"robot": deepcopy(get_go2_robot_cfg())}
+  # amp_go2's ordinary reset starts above the ground, with randomized joints.
+  cfg.scene.entities["robot"].init_state.pos = (0.0, 0.0, 0.42)
+  cfg.motion = MotionCfg(
+    preload_transitions=not play,
+    num_preload_transitions=2_000_000,
+    preload_batch_size=16_384,
+  )
 
   # Set raycast sensor frame to Go2 base_link.
   for sensor in cfg.scene.sensors or ():
@@ -141,14 +151,6 @@ def unitree_go2_amp_loco_env_cfg(play: bool = False) -> AmpLocoEnvCfg:
   cfg.sim.contact_sensor_maxmatch = 64
   cfg.sim.nconmax = None
 
-  cfg.motion = MotionCfg(
-    preload_transitions=True,
-    num_preload_transitions=2_000_000,
-    preload_batch_size=16_384,
-  )
-  # NPZ feet centers are about 9 mm below the current 22 mm foot radius.
-  cfg.reference_height_offset = 0.01
-
   # Switch to flat terrain.
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.terrain_type = "plane"
@@ -165,8 +167,68 @@ def unitree_go2_amp_loco_env_cfg(play: bool = False) -> AmpLocoEnvCfg:
   cfg.curriculum.pop("terrain_levels", None)
 
   if play:
-    cfg.reference_init_probability = 0.0
-    cfg.motion.preload_transitions = False
+    twist_cmd = cfg.commands["twist"]
+    assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+    twist_cmd.ranges.lin_vel_x = (-1.0, 2.0)
+    twist_cmd.ranges.lin_vel_y = (-1.0, 1.0)
+    twist_cmd.ranges.ang_vel_z = (-1.0, 1.0)
+
+  return cfg
+
+
+def unitree_go2_amp_rough_env_cfg(play: bool = False) -> AmpLocoEnvCfg:
+  """Create an AMP rough task with privileged terrain scan and ordinary resets."""
+  cfg = _unitree_go2_amp_loco_base_env_cfg(play=play)
+  cfg.scene.terrain = TerrainEntityCfg(
+    terrain_type="generator",
+    terrain_generator=make_amp_rough_terrains_cfg(play=play),
+    max_init_terrain_level=5,
+  )
+  cfg.events["reset_base"].params["pose_range"] = {
+    "x": (-1.0, 1.0), "y": (-1.0, 1.0),
+  }
+  cfg.scene.sensors = (cfg.scene.sensors or ()) + (
+    RayCastSensorCfg(
+      name="terrain_scan",
+      frame=ObjRef(type="body", name="base_link", entity="robot"),
+      ray_alignment="yaw",
+      pattern=GridPatternCfg(size=(1.6, 1.0), resolution=0.1),
+      max_distance=5.0,
+      include_geom_groups=(0,),
+      exclude_parent_body=True,
+      debug_vis=True,
+    ),
+  )
+  # Match amp_go2's privileged scan: clip(base_z - ground_z - 0.5, -1, 1) * 2.5.
+  cfg.observations["critic"].terms["height_scan"] = ObservationTermCfg(
+    func=envs_mdp.height_scan,
+    params={"sensor_name": "terrain_scan", "offset": 0.5},
+    clip=(-1.0, 1.0),
+    scale=2.5,
+  )
+
+  # Feet need clearance above local terrain rather than absolute world Z.
+  foot_sensor_names = tuple(f"foot_terrain_{foot}" for foot in ("FR", "FL", "RR", "RL"))
+  cfg.scene.sensors += tuple(
+    RayCastSensorCfg(
+      name=name,
+      frame=ObjRef(type="site", name=foot, entity="robot"),
+      ray_alignment="world",
+      pattern=GridPatternCfg(size=(0.0, 0.0), resolution=0.1),
+      max_distance=1.0,
+      include_geom_groups=(0,),
+    )
+    for name, foot in zip(foot_sensor_names, ("FR", "FL", "RR", "RL"))
+  )
+  cfg.observations["critic"].terms["foot_height"] = ObservationTermCfg(
+    func=mdp.foot_height_above_terrain,
+    params={"sensor_names": foot_sensor_names},
+  )
+
+  if play:
+    # Select the new patch before resetting the robot onto its spawn origin.
+    randomize_terrain = cfg.events.pop("randomize_terrain")
+    cfg.events = {"randomize_terrain": randomize_terrain, **cfg.events}
     twist_cmd = cfg.commands["twist"]
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
     twist_cmd.ranges.lin_vel_x = (-0.5, 1.0)

@@ -65,7 +65,7 @@ class Go2MotionLoader:
     if not self.motion_files:
       raise FileNotFoundError(f"No selected NPZ motions in {directory}")
     self.device = device
-    states, body_states, positions, velocities, lengths, frame_rates = [], [], [], [], [], []
+    states, body_states, lengths, frame_rates = [], [], [], []
     required = ("joint_pos", "joint_vel", "body_pos_w", "body_quat_w",
                 "body_lin_vel_w", "body_ang_vel_w")
     for path in self.motion_files:
@@ -89,7 +89,6 @@ class Go2MotionLoader:
       if (norm < 1e-6).any():
         raise ValueError(f"{path}: invalid body quaternion")
       body_quat = body_quat / norm
-      q, qd = tensors["joint_pos"], tensors["joint_vel"]
       states.append(multi_body_state(
         tensors["body_pos_w"][:, self.body_ids], body_quat[:, self.body_ids],
         tensors["body_lin_vel_w"][:, self.body_ids], tensors["body_ang_vel_w"][:, self.body_ids],
@@ -97,15 +96,10 @@ class Go2MotionLoader:
       ))
       body_states.append(torch.cat((tensors["body_pos_w"], body_quat,
                                     tensors["body_lin_vel_w"], tensors["body_ang_vel_w"]), dim=-1))
-      positions.append(q)
-      velocities.append(qd)
       lengths.append(length)
       frame_rates.append(float(fps[0]))
     self.states = torch.cat(states)
     self.body_states = torch.cat(body_states)
-    self.root_states = self.body_states[:, 0]
-    self.joint_pos = torch.cat(positions)
-    self.joint_vel = torch.cat(velocities)
     self.lengths = torch.tensor(lengths, device=device, dtype=torch.long)
     self.offsets = torch.cat((self.lengths.new_zeros(1), self.lengths.cumsum(0)[:-1]))
     self.fps = torch.tensor(frame_rates, device=device, dtype=torch.float32)
@@ -204,19 +198,9 @@ class Go2MotionLoader:
     return (self.get_amp_frame_at_time_batch(clips, times),
             self.get_amp_frame_at_time_batch(clips, times + self.step_dt))
 
-  def sample_reference(self, batch_size: int):
-    clips, times = self.sample_times(batch_size, transition=False)
-    lower, upper, fraction = self._frame_indices(clips, times)
-    first, second = self.root_states[lower], self.root_states[upper]
-    blend = fraction[:, None]
-    root = torch.lerp(first, second, blend)
-    root[:, 3:7] = quaternion_slerp(first[:, 3:7], second[:, 3:7], blend)
-    return (root, torch.lerp(self.joint_pos[lower], self.joint_pos[upper], blend),
-            torch.lerp(self.joint_vel[lower], self.joint_vel[upper], blend))
-
 
 def expert_data_from_env(env, device: str):
-  """Reuse the environment's loader for discriminator sampling and resets."""
+  """Reuse the environment's expert loader for discriminator sampling."""
   dataset = env.unwrapped.motion_dataset
   if str(dataset.states.device) != str(torch.device(device)):
     raise ValueError("AMP environment and algorithm must use the same device")

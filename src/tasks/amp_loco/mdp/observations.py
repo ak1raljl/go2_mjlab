@@ -6,7 +6,7 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.sensor import ContactSensor
+from mjlab.sensor import ContactSensor, RayCastSensor
 from src.tasks.amp_loco.rl.amp_features import multi_body_state
 
 if TYPE_CHECKING:
@@ -20,6 +20,18 @@ def foot_height(
 ) -> torch.Tensor:
   asset: Entity = env.scene[asset_cfg.name]
   return asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # (num_envs, num_sites)
+
+
+def foot_height_above_terrain(
+  env: ManagerBasedRlEnv, sensor_names: tuple[str, ...]
+) -> torch.Tensor:
+  """Return foot-site clearance from downward terrain-only raycasts."""
+  heights = []
+  for name in sensor_names:
+    sensor: RayCastSensor = env.scene[name]
+    distance = sensor.data.distances
+    heights.append(torch.where(distance < 0, sensor.cfg.max_distance, distance))
+  return torch.cat(heights, dim=-1)
 
 
 def foot_air_time(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
