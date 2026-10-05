@@ -26,16 +26,22 @@ pip install -e .
 
 ## AMP locomotion
 
-`Unitree-Go2-AMP-Loco` is a flat-terrain task implemented in
-`src/tasks/amp_loco`, independently of the velocity tasks. Its AMP training
+`Unitree-Go2-AMP-Loco` extends `Unitree-Go2-Flat` with AMP training. Its AMP
 design follows `thirdparty/rsl_rl_amp`: PPO auxiliary discriminator loss,
 joint Adam parameter groups, replay sampling, and mixed reward logging.
 The installed RSL-RL package and `thirdparty` sources are not modified.
-Environment configuration follows the velocity task structure:
-`amp_loco_env_cfg.py` provides `make_amp_loco_env_cfg()` for common task
-settings, and `config/go2/env_cfgs.py` fills robot assets, contact sensors,
-motion data, and playback overrides. `env.py` handles runtime AMP state
-capture before automatic resets.
+`amp_loco_env_cfg.py` owns `make_amp_loco_env_cfg()` and the full task
+configuration. Its Go2 adapter owns robot assets, sensors, per-robot terms,
+flat terrain, expert data, and playback overrides. The task's local `mdp/`
+contains its locomotion observations, rewards, terminations, and curricula.
+These settings match `Unitree-Go2-Flat`; actor/critic networks and PPO
+hyperparameters match velocity as well. There are no imports from
+`src.tasks.velocity`, so removing that package leaves AMP registration and
+training functional. Configuration factories create independent objects;
+robot configuration is deep copied. `env.py` captures terminal AMP states
+before automatic resets.
+Keep aligned locomotion settings in both tasks in sync explicitly when
+either task changes.
 
 The default expert dataset is `src/assets/motions/go2`: 20 NPZ clips,
 including canter and excluding `go2_jump_*.npz`, sampled with equal clip
@@ -49,9 +55,11 @@ Body selection and anchor are configurable through `--env.motion.body-names`
 and `--env.motion.anchor-name`, with the same ordering used for expert and
 simulation observations. No additional foot positions or base height are
 appended to the discriminator input.
-Actor/critic observations have 45/48 dimensions. Robot PD gains, default
-action offsets, action scale (0.25), and the 50 Hz control rate match the
-velocity tasks. The forward command range extends to 3 m/s for canter.
+Actor/critic observations match flat velocity, including the actor's gait
+phase and the critic's foot height, air time, contacts, and forces. Robot PD
+gains, action offsets, action scale (0.25), and the 50 Hz control rate match
+velocity. Earlier AMP checkpoints with 45/48 actor/critic inputs require a
+new training run because these observation layouts changed.
 
 ### Expert transition preloading
 
@@ -64,9 +72,10 @@ interpolation, preserving unit rotations and the 195D frame layout.
 Time indexing uses actual frame timestamps `i / fps`, with both states
 inside the same clip.
 
-Training defaults to **2,000,000 expert transitions**, filled in batches of
-16,384. The two float32 `(2000000, 195)` tensors consume about 3.12 GB
-(2.91 GiB), in addition to the policy replay buffer. The environment and
+The Go2 configuration currently preloads **1,000,000 expert transitions**,
+filled in batches of 16,384. Two float32 `(1000000, 195)` tensors consume
+about 1.56 GB (1.45 GiB), in addition to the policy replay buffer. Setting
+2,000,000 transitions consumes 3.12 GB (2.91 GiB). The environment and
 algorithm share one loader and one expert cache. Reference resets sample
 continuous times from the original trajectories, including interpolated
 root pose, velocity, and joint state. Playback disables the expert cache.
@@ -79,23 +88,28 @@ original 20 clips / 3896 frames, then the expert preload count and shapes.
 
 ### Velocity command curriculum
 
-Training expands the command ranges at episode resets using
-`common_step_counter` (control steps per environment). With the default
-24-step PPO rollout, the stages correspond to iterations 0/1000/3000/5000:
+The curriculum uses velocity's schedule and implementation at episode
+resets, with `common_step_counter` counting control steps per environment.
+Stage thresholds use `step > threshold`, matching velocity exactly:
 
 | Control step | vx (m/s) | vy (m/s) | wz (rad/s) |
 |---:|---|---|---|
-| 0 | [-0.5, 1.0] | [-0.3, 0.3] | [-0.5, 0.5] |
-| 24000 | [-0.8, 1.5] | [-0.5, 0.5] | [-0.75, 0.75] |
-| 72000 | [-1.0, 2.0] | [-0.6, 0.6] | [-1.0, 1.0] |
-| 120000 | [-1.2, 3.0] | [-0.8, 0.8] | [-1.0, 1.0] |
+| > 0 | [-0.5, 1.0] | [-0.5, 0.5] | [-1.0, 1.0] |
+| > 120000 (5000 × 24) | [-1.0, 2.0] | [-1.0, 1.0] | [-1.0, 1.0] |
 
-The schedule is configured in `config/go2/env_cfgs.py`; the independent AMP
-curriculum term lives in `mdp/curriculums.py`. Already sampled commands keep
-their targets until resampling. Checkpoints restore the counter, and the
-appropriate stage is reapplied at the next reset. Playback disables the
-curriculum and uses the final ranges. TensorBoard records the stage and all
-axis limits under `Curriculum/command_vel/*`.
+At control step zero, command ranges retain velocity's base configuration:
+vx [-1, 2], vy [-1, 1], wz [-1, 1]. The aligned schedule is defined in
+`src/tasks/amp_loco/amp_loco_env_cfg.py`; the flat task disables terrain
+curriculum. Commands resample every 3–8 seconds with heading control enabled.
+Checkpoints restore the step counter. Playback follows flat velocity:
+curriculum and pushes are disabled; ranges are vx [-0.5, 1], vy [-0.5, 0.5],
+wz [-0.5, 0.5].
+
+Task rewards use all 15 velocity terms and their exact weights, including
+posture, gait, clearance/slip, angular momentum, and termination penalty.
+Terminations are timeout, 70-degree tilt, and non-foot contact exceeding
+10 N, using the same four-frame contact history as velocity. AMP adds its
+existing discriminator reward and reference initialization to this task.
 
 Analyze the stored motions with `python scripts/analyze_motion_speeds.py`.
 The [speed report](docs/motion_analysis/go2/README.md) includes every clip,
@@ -123,3 +137,12 @@ metadata. Reference initialization is configurable through
 `--env.reference-init-probability`; the default is 1.0 for training and
 0.0 for playback. A configurable 1 cm reset height offset compensates for
 the NPZ foot clearance relative to the current MJCF foot sphere.
+
+Training resets randomize XY by ±0.5 m and yaw by ±3.14 rad. Reference
+initialization retains these transforms and rotates expert world velocities
+consistently. Startup events randomize foot friction in [0.3, 1.6] (shared
+across the four feet per environment), encoder bias by ±0.015 rad, and base
+COM by ±0.05 m on each axis. Encoder bias is applied to joint position
+targets following velocity; policy observations and AMP use physical
+states. Random velocity pushes occur every 5–6 seconds and are disabled
+during playback.

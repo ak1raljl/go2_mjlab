@@ -1,49 +1,107 @@
-"""Step-based command curricula kept independent of the velocity task."""
+from __future__ import annotations
 
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
+
+import torch
+
+from mjlab.entity import Entity
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+
+if TYPE_CHECKING:
+  from mjlab.envs import ManagerBasedRlEnv
+
+_DEFAULT_SCENE_CFG = SceneEntityCfg("robot")
 
 
 class VelocityStage(TypedDict):
   step: int
-  lin_vel_x: tuple[float, float]
-  lin_vel_y: tuple[float, float]
-  ang_vel_z: tuple[float, float]
+  lin_vel_x: tuple[float, float] | None
+  lin_vel_y: tuple[float, float] | None
+  ang_vel_z: tuple[float, float] | None
 
 
-def commands_vel(env, env_ids, command_name: str, velocity_stages: list[VelocityStage]) -> dict[str, float]:
-  """Apply the latest stage on reset, using the checkpointed simulation-step counter.
+class RewardWeightStage(TypedDict):
+  step: int
+  weight: float
 
-  Steps count control ticks per environment, independently of environment count.
-  Already active commands finish their sampling interval; new samples use the
-  updated ranges. Every stage specifies all axes, so restores are deterministic.
-  """
-  del env_ids
-  if not velocity_stages or velocity_stages[0]["step"] != 0:
-    raise ValueError("Velocity stages must start at step zero")
-  previous_step = -1
-  axes = ("lin_vel_x", "lin_vel_y", "ang_vel_z")
+
+def terrain_levels_vel(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_SCENE_CFG,
+) -> torch.Tensor:
+  asset: Entity = env.scene[asset_cfg.name]
+
+  terrain = env.scene.terrain
+  assert terrain is not None
+  terrain_generator = terrain.cfg.terrain_generator
+  assert terrain_generator is not None
+
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+
+  # Compute the distance the robot walked.
+  distance = torch.norm(
+    asset.data.root_link_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1
+  )
+
+  # Robots that walked far enough progress to harder terrains.
+  move_up = distance > terrain_generator.size[0] / 2
+
+  # Robots that walked less than half of their required distance go to simpler
+  # terrains.
+  move_down = (
+    distance < torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s * 0.5
+  )
+  move_down *= ~move_up
+
+  # Update terrain levels.
+  terrain.update_env_origins(env_ids, move_up, move_down)
+
+  return torch.mean(terrain.terrain_levels.float())
+
+
+def commands_vel(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor,
+  command_name: str,
+  velocity_stages: list[VelocityStage],
+) -> dict[str, torch.Tensor]:
+  del env_ids  # Unused.
+  command_term = env.command_manager.get_term(command_name)
+  assert command_term is not None
+  cfg = cast(UniformVelocityCommandCfg, command_term.cfg)
   for stage in velocity_stages:
-    step = stage["step"]
-    if not isinstance(step, int) or step <= previous_step:
-      raise ValueError("Velocity stage steps must be strictly increasing integers")
-    previous_step = step
-    for axis in axes:
-      lower, upper = stage[axis]
-      if not (float("-inf") < lower <= upper < float("inf")):
-        raise ValueError(f"Velocity stage {step}: invalid finite {axis} range")
+    if env.common_step_counter > stage["step"]:
+      if "lin_vel_x" in stage and stage["lin_vel_x"] is not None:
+        cfg.ranges.lin_vel_x = stage["lin_vel_x"]
+      if "lin_vel_y" in stage and stage["lin_vel_y"] is not None:
+        cfg.ranges.lin_vel_y = stage["lin_vel_y"]
+      if "ang_vel_z" in stage and stage["ang_vel_z"] is not None:
+        cfg.ranges.ang_vel_z = stage["ang_vel_z"]
+  return {
+    # "lin_vel_x_min": torch.tensor(cfg.ranges.lin_vel_x[0]),
+    # "lin_vel_x_max": torch.tensor(cfg.ranges.lin_vel_x[1]),
+    # "lin_vel_y_min": torch.tensor(cfg.ranges.lin_vel_y[0]),
+    # "lin_vel_y_max": torch.tensor(cfg.ranges.lin_vel_y[1]),
+    # "ang_vel_z_min": torch.tensor(cfg.ranges.ang_vel_z[0]),
+    # "ang_vel_z_max": torch.tensor(cfg.ranges.ang_vel_z[1]),
+  }
 
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command.cfg, UniformVelocityCommandCfg):
-    raise TypeError("Velocity command curriculum requires UniformVelocityCommandCfg")
-  index = max(i for i, stage in enumerate(velocity_stages)
-              if env.common_step_counter >= stage["step"])
-  stage = velocity_stages[index]
-  state = {"stage": float(index)}
-  for axis in axes:
-    lower, upper = stage[axis]
-    setattr(command.cfg.ranges, axis, (lower, upper))
-    state[f"{axis}_min"] = float(lower)
-    state[f"{axis}_max"] = float(upper)
-  return state
+
+def reward_weight(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor,
+  reward_name: str,
+  weight_stages: list[RewardWeightStage],
+) -> torch.Tensor:
+  """Update a reward term's weight based on training step stages."""
+  del env_ids  # Unused.
+  reward_term_cfg = env.reward_manager.get_term_cfg(reward_name)
+  for stage in weight_stages:
+    if env.common_step_counter > stage["step"]:
+      reward_term_cfg.weight = stage["weight"]
+  return torch.tensor([reward_term_cfg.weight])
