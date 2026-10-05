@@ -6,6 +6,7 @@ from src.assets.robots.unitree_go2.go2_constants import get_go2_robot_cfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
+from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, GridPatternCfg, ObjRef, RayCastSensorCfg
@@ -184,6 +185,17 @@ def unitree_go2_amp_rough_env_cfg(play: bool = False) -> AmpLocoEnvCfg:
     terrain_generator=make_amp_rough_terrains_cfg(play=play),
     max_init_terrain_level=5,
   )
+  if not play:
+    # The existing terrain_levels term updates each environment once. These
+    # scalar terms only report levels, preserving the aggregate log and the
+    # curriculum manager's viewer support in mjlab 1.2.
+    generator = cfg.scene.terrain.terrain_generator
+    assert generator is not None
+    for name in generator.sub_terrains:
+      cfg.curriculum[f"terrain_levels/{name}"] = CurriculumTermCfg(
+        func=mdp.terrain_level_mean,
+        params={"terrain_name": name},
+      )
   cfg.events["reset_base"].params["pose_range"] = {
     "x": (-1.0, 1.0), "y": (-1.0, 1.0),
   }

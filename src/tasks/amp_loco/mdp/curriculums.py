@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict, cast
 
+import numpy as np
 import torch
 
 from mjlab.entity import Entity
+from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
@@ -62,6 +65,46 @@ def terrain_levels_vel(
   terrain.update_env_origins(env_ids, move_up, move_down)
 
   return torch.mean(terrain.terrain_levels.float())
+
+
+def terrain_columns_by_name(cfg: TerrainGeneratorCfg) -> dict[str, tuple[int, ...]]:
+  """Match mjlab 1.2's curriculum column allocation, including normalization."""
+  proportions = np.array([sub.proportion for sub in cfg.sub_terrains.values()])
+  cumulative = np.cumsum(proportions / proportions.sum())
+  column_types = np.searchsorted(
+    cumulative, np.arange(cfg.num_cols) / cfg.num_cols + 0.001, side="right"
+  )
+  return {
+    name: tuple(np.flatnonzero(column_types == index).tolist())
+    for index, name in enumerate(cfg.sub_terrains)
+  }
+
+
+class terrain_level_mean:
+  """Report one terrain type's mean level without changing its curriculum."""
+
+  def __init__(self, cfg: CurriculumTermCfg, env: ManagerBasedRlEnv):
+    terrain = env.scene.terrain
+    assert terrain is not None
+    generator = terrain.cfg.terrain_generator
+    assert generator is not None and generator.curriculum
+    # Resolve after CLI overrides, using the actual terrain generator settings.
+    columns = terrain_columns_by_name(generator)[cfg.params["terrain_name"]]
+    self.columns = torch.tensor(
+      columns, device=terrain.terrain_types.device, dtype=torch.long
+    )
+
+  def __call__(
+    self, env: ManagerBasedRlEnv, env_ids: torch.Tensor, terrain_name: str
+  ) -> torch.Tensor | None:
+    del env_ids, terrain_name  # Include all environments, not only the reset subset.
+    terrain = env.scene.terrain
+    assert terrain is not None
+    mask = torch.isin(terrain.terrain_types, self.columns)
+    if not mask.any():
+      # An unassigned type has no meaningful level; do not log zero or NaN.
+      return None
+    return terrain.terrain_levels[mask].float().mean()
 
 
 def commands_vel(

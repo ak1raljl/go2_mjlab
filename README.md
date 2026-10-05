@@ -43,10 +43,10 @@ python scripts/list_envs.py --keyword Go2
 ## Train
 
 ```bash
-python scripts/train.py Unitree-Go2-Flat  --gpu-ids 0 --agent.run-name flat
-python scripts/train.py Unitree-Go2-Rough --gpu-ids 0 --agent.run-name rough
-python scripts/train.py Unitree-Go2-AMP-Loco --gpu-ids 0 --agent.run-name amp
-python scripts/train.py Unitree-Go2-AMP-Rough --gpu-ids '[0]' --env.scene.num-envs 1024 --agent.run-name amp_rough
+python scripts/train.py Unitree-Go2-Flat  --gpu-ids '[0]' --env.scene.num-envs 4096 --agent.run-name flat
+python scripts/train.py Unitree-Go2-Rough --gpu-ids '[0]' --env.scene.num-envs 4096 --agent.run-name rough
+python scripts/train.py Unitree-Go2-AMP-Loco --gpu-ids '[0]' --env.scene.num-envs 4096 --agent.run-name amp
+python scripts/train.py Unitree-Go2-AMP-Rough --gpu-ids '[0]' --env.scene.num-envs 4096 --agent.run-name amp_rough
 ```
 <details>
 <summary><b>Script arguments</b></summary>
@@ -93,50 +93,3 @@ Keyboard control: `W`/`S` forward/backward, `A`/`D` lateral, `Q`/`E` yaw.
 | --- | --- |
 | `scripts/play_motion_go2.py --motion-file <npz>` | Replay a reference motion clip on Go2 |
 
-## AMP rough terrain
-
-`Unitree-Go2-AMP-Rough` is an independent registered task using
-`src/tasks/amp_loco/config/go2/terrains.py`. It matches `amp_go2`'s terrain
-weights and parameter ranges: 10% smooth slopes (split equally between the
-two signs), 20% rough slopes with [-0.05, 0.05] m noise sampled every 0.2 m,
-25% stairs up, 25% stairs down, and 20% discrete obstacles. Slopes range from
-0 to 0.4 rise/run, stair heights from 0.05 to 0.23 m with 0.31 m treads, and
-obstacle heights from 0.05 to 0.25 m. Each obstacle patch has 20 rectangles
-with widths/lengths of 1 to 2 m. Patches are 8 x 8 m with 3 m center platforms,
-on a 10 x 20 curriculum grid with a 25 m border. mjlab uses native box stairs
-and heightfields, so geometry and row difficulty sampling are not an exact
-reproduction of Isaac Gym's triangle mesh.
-
-Only the critic receives the 187-point, yaw-aligned terrain scan over
-1.6 x 1.0 m at 0.1 m resolution. Its values follow `amp_go2`:
-`clip(base_z - ground_z - 0.5, -1, 1) * 2.5`. Rays include only terrain
-geometry (group 0). The critic's four foot heights use local terrain
-clearance rather than absolute world Z. Actor and AMP discriminator inputs
-keep their existing layouts. Rough training uses terrain and velocity
-curricula; playback disables curricula and pushes, and selects a terrain
-patch before resetting the robot onto its origin.
-
-```bash
-python scripts/train.py Unitree-Go2-AMP-Rough --gpu-ids '[0]' \
-  --env.scene.num-envs 1024 --agent.run-name amp_rough
-
-# Short smoke run with a smaller expert cache.
-python scripts/train.py Unitree-Go2-AMP-Rough --gpu-ids '[0]' \
-  --env.scene.num-envs 32 --env.episode-length-s 1.0 \
-  --env.motion.num-preload-transitions 4096 \
-  --agent.max-iterations 5 --agent.save-interval 2 \
-  --agent.run-name amp_rough_smoke --enable-nan-guard True
-```
-
-Rough logs, checkpoints, and ONNX exports go to `logs/rsl_rl/go2_amp_rough/`.
-Full flat checkpoints cannot resume rough training because the critic gains
-187 inputs; start a fresh rough run. Playback uses the same task ID:
-`python scripts/play.py Unitree-Go2-AMP-Rough --checkpoint-file <model.pt>`.
-
-Both AMP tasks use ordinary resets following `amp_go2`; reference-state
-initialization and its CLI options have been removed. The default base
-height is 0.42 m above the terrain origin, root orientation is the default
-quaternion, root linear/angular velocities are sampled in [-0.5, 0.5],
-and joint angles are scaled by [0.5, 1.5] from their defaults (clamped
-to soft limits) with zero joint velocities. Rough resets randomize XY
-by +/-1 m around the terrain origin; flat resets use the origin directly.
