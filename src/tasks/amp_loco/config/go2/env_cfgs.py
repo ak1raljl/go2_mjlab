@@ -143,7 +143,7 @@ def unitree_go2_amp_loco_env_cfg(play: bool = False) -> AmpLocoEnvCfg:
 
   cfg.motion = MotionCfg(
     preload_transitions=True,
-    num_preload_transitions=1_000_000,
+    num_preload_transitions=2_000_000,
     preload_batch_size=16_384,
   )
   # NPZ feet centers are about 9 mm below the current 22 mm foot radius.
@@ -155,11 +155,11 @@ def unitree_go2_amp_loco_env_cfg(play: bool = False) -> AmpLocoEnvCfg:
   cfg.scene.terrain.terrain_generator = None
 
   # Remove raycast sensor and height scan (no terrain to scan).
-  cfg.scene.sensors = tuple(
-    s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
-  )
-  del cfg.observations["actor"].terms["height_scan"]
-  del cfg.observations["critic"].terms["height_scan"]
+  # cfg.scene.sensors = tuple(
+  #   s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
+  # )
+  # del cfg.observations["actor"].terms["height_scan"]
+  # del cfg.observations["critic"].terms["height_scan"]
 
   # Flat terrain has no terrain curriculum; play mode clears all curricula.
   cfg.curriculum.pop("terrain_levels", None)

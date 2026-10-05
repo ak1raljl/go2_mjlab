@@ -90,12 +90,12 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
       noise=Unoise(n_min=-1.5, n_max=1.5),
     ),
     "actions": ObservationTermCfg(func=mdp.last_action),
-    "height_scan": ObservationTermCfg(
-      func=envs_mdp.height_scan,
-      params={"sensor_name": "terrain_scan"},
-      noise=Unoise(n_min=-0.1, n_max=0.1),
-      scale=1 / terrain_scan.max_distance,
-    ),
+    # "height_scan": ObservationTermCfg(
+    #   func=envs_mdp.height_scan,
+    #   params={"sensor_name": "terrain_scan"},
+    #   noise=Unoise(n_min=-0.1, n_max=0.1),
+    #   scale=1 / terrain_scan.max_distance,
+    # ),
   }
 
   critic_terms = {
@@ -105,11 +105,11 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
       params={"sensor_name": "robot/imu_lin_vel"},
       noise=Unoise(n_min=-0.5, n_max=0.5),
     ),
-    "height_scan": ObservationTermCfg(
-      func=envs_mdp.height_scan,
-      params={"sensor_name": "terrain_scan"},
-      scale=1 / terrain_scan.max_distance,
-    ),
+    # "height_scan": ObservationTermCfg(
+    #   func=envs_mdp.height_scan,
+    #   params={"sensor_name": "terrain_scan"},
+    #   scale=1 / terrain_scan.max_distance,
+    # ),
     "foot_height": ObservationTermCfg(
       func=mdp.foot_height,
       params={"asset_cfg": SceneEntityCfg("robot", site_names=())},  # Set per-robot.

@@ -20,7 +20,7 @@ git clone https://github.com/ak1raljl/go2_mjlab.git
 ```
 
 ```bash
-cd parkour_mjlab
+cd go2_mjlab
 pip install -e .
 ```
 
