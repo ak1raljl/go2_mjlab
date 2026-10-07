@@ -1,4 +1,5 @@
-"""Play Go2 velocity policies with keyboard commands or a headless rollout."""
+# ruff: noqa: E402
+"""Play Go2 policies with keyboard commands and optional PIE depth views."""
 
 from __future__ import annotations
 
@@ -79,12 +80,15 @@ def get_keyboard_command(
 class KeyboardController:
     """Poll pygame and expose the current keyboard velocity command."""
 
-    def __init__(self, cmd_limits: np.ndarray) -> None:
+    def __init__(self, cmd_limits: np.ndarray, depth: bool = False) -> None:
         self._pygame = _load_pygame()
         self._cmd_limits = cmd_limits
         self._pygame.init()
-        self._screen = self._pygame.display.set_mode((200, 100))
-        self._pygame.display.set_caption("Go2 Keyboard Control")
+        self._screen = self._pygame.display.set_mode((1280, 380) if depth else (200, 100))
+        self._pygame.display.set_caption(
+            "Go2 Keyboard Control / PIE Depth" if depth else "Go2 Keyboard Control"
+        )
+        self._font = self._pygame.font.Font(None, 23) if depth else None
         print("Keyboard control: W/S=vx, A/D=vy, Q/E=yaw")
 
     def read(self) -> np.ndarray:
@@ -94,6 +98,49 @@ class KeyboardController:
 
     def close(self) -> None:
         self._pygame.quit()
+
+    def show_depth(
+        self, raw: np.ndarray, history: np.ndarray, cutoff: float
+    ) -> None:
+        """Display sensor metres and the exact cached policy frames for env 0."""
+        assert self._font is not None
+        pygame = self._pygame
+        self._screen.fill((24, 24, 28))
+
+        def label(text: str, x: int, y: int) -> None:
+            self._screen.blit(self._font.render(text, True, (235, 235, 235)), (x, y))
+
+        label("Environment 0 | W/S=vx, A/D=vy, Q/E=yaw (focus this window)", 16, 10)
+        panels = (
+            ("Raw depth (m), current sensor", raw, cutoff),
+            ("Policy depth [0, 1], oldest", history[0], 1.0),
+            ("Policy depth [0, 1], newest", history[-1], 1.0),
+        )
+        for index, (title, values, maximum) in enumerate(panels):
+            x = 16 + index * 424
+            label(title, x, 42)
+            # Fixed display scale: never normalize each frame independently.
+            # Raw invalid pixels remain distinguishable from far-range returns.
+            valid = np.isfinite(values) & (values > 0)
+            scaled = np.clip(np.where(valid, values, 0.0) / maximum, 0.0, 1.0)
+            rgb = np.repeat((scaled * 255).astype(np.uint8)[..., None], 3, axis=-1)
+            rgb[~valid] = (255, 0, 255)
+            surface = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
+            h, w = values.shape
+            zoom = min(408 / w, 240 / h)
+            surface = pygame.transform.scale(surface, (int(w * zoom), int(h * zoom)))
+            self._screen.blit(surface, (x, 72))
+            limits = (
+                f"min={values[valid].min():.3f}, max={values[valid].max():.3f}"
+                if valid.any() else "No valid depth"
+            )
+            label(f"{w} x {h} | {limits}", x, 318)
+        label(
+            f"Black=near, white=>={cutoff:g} m; magenta=invalid. "
+            "Policy frames hold between camera updates; CNN subtracts 0.5.",
+            16, 350,
+        )
+        pygame.display.flip()
 
 
 class FixedCommandController:
@@ -118,11 +165,13 @@ class KeyboardCommandEnv:
         keyboard: KeyboardController | FixedCommandController,
         command_name: str,
         policy: Any = None,
+        depth: bool = False,
     ) -> None:
         self._env = env
         self._keyboard = keyboard
         self._command_name = command_name
         self._policy = policy
+        self._depth = depth
         self._command = env.unwrapped.command_manager.get_command(command_name)
 
         if self._command is None:
@@ -182,13 +231,38 @@ class KeyboardCommandEnv:
     def initialize(self) -> None:
         """Replace the reset-time random command in the observation cache."""
         self._update_command()
+        self._update_depth(self._env.get_observations())
+
+    def _update_depth(self, observations: Any) -> None:
+        if not self._depth:
+            return
+        assert isinstance(self._keyboard, KeyboardController)
+        env = self._env.unwrapped
+        params = env.cfg.observations["camera"].terms["front_depth"].params
+        raw = env.scene[params["sensor_name"]].data.depth
+        assert raw is not None
+        height = raw.shape[1]
+        width = raw.shape[2] - params.get("crop_left", 0) - params.get("crop_right", 0)
+        # Read the cached observation passed to the policy. Reprocessing the
+        # latest sensor frame here would incorrectly bypass the 10 Hz history.
+        history = observations["camera"][0].reshape(
+            params["frame_history_length"], height, width
+        )
+        self._keyboard.show_depth(
+            raw[0, ..., 0].detach().cpu().numpy(),
+            history.detach().cpu().numpy(),
+            params["cutoff_distance"],
+        )
 
     def get_observations(self) -> Any:
         self._update_command()
-        return self._env.get_observations()
+        observations = self._env.get_observations()
+        self._update_depth(observations)
+        return observations
 
     def step(self, actions: torch.Tensor) -> Any:
         result = self._env.step(actions)
+        self._update_depth(result[0])
         if self._policy is not None and hasattr(self._policy, "reset"):
             self._policy.reset(result[2])
         return result
@@ -215,12 +289,14 @@ class PlayConfig:
     command_name: str = "twist"
     num_envs: int | None = None
     device: str | None = None
-    video: bool = False
+    video: tyro.conf.FlagConversionOff[bool] = False
     video_length: int = 200
     video_height: int | None = None
     video_width: int | None = None
     viewer: Literal["auto", "native", "viser"] = "auto"
-    no_terminations: bool = True
+    depth: bool = False
+    """Show PIE raw depth and both processed policy frames in the keyboard window."""
+    no_terminations: tyro.conf.FlagConversionOff[bool] = True
     headless_steps: int = 0
     command: tuple[float, float, float] = (0.5, 0.0, 0.0)
 
@@ -263,6 +339,8 @@ def run_play(task_id: str, cfg: PlayConfig) -> None:
     configure_torch_backends()
     if cfg.headless_steps < 0:
         raise ValueError("--headless-steps must be nonnegative.")
+    if cfg.depth and cfg.headless_steps > 0:
+        raise ValueError("--depth requires interactive playback; omit --headless-steps.")
 
     if cfg.checkpoint_file is None:
         raise ValueError("Playback requires --checkpoint-file.")
@@ -273,6 +351,10 @@ def run_play(task_id: str, cfg: PlayConfig) -> None:
     device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
     env_cfg = load_env_cfg(task_id, play=True)
     agent_cfg = load_rl_cfg(task_id)
+    if cfg.depth:
+        camera_group = env_cfg.observations.get("camera")
+        if camera_group is None or "front_depth" not in camera_group.terms:
+            raise ValueError("--depth requires a PIE task with front_depth camera observations.")
 
     if cfg.no_terminations:
         env_cfg.terminations = {}
@@ -328,13 +410,13 @@ def run_play(task_id: str, cfg: PlayConfig) -> None:
     keyboard = (
         FixedCommandController(cfg.command)
         if cfg.headless_steps > 0
-        else KeyboardController(cmd_limits)
+        else KeyboardController(cmd_limits, depth=cfg.depth)
     )
-    keyboard_env = KeyboardCommandEnv(vec_env, keyboard, cfg.command_name, policy)
-    keyboard_env.initialize()
+    keyboard_env = KeyboardCommandEnv(vec_env, keyboard, cfg.command_name, policy, depth=cfg.depth)
     resolved_viewer = _resolve_viewer(cfg.viewer)
 
     try:
+        keyboard_env.initialize()
         if cfg.headless_steps > 0:
             with torch.inference_mode():
                 for _ in range(cfg.headless_steps):
@@ -369,7 +451,9 @@ def main() -> None:
         args=remaining_args,
         default=PlayConfig(),
         prog=sys.argv[0] + f" {chosen_task}",
-        config=mjlab.TYRO_FLAGS,
+        # Keep existing explicit boolean arguments while exposing --depth as
+        # a bare switch rather than requiring --depth True.
+        config=tuple(flag for flag in mjlab.TYRO_FLAGS if flag is not tyro.conf.FlagConversionOff),
     )
     run_play(chosen_task, args)
 
