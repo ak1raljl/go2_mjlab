@@ -1,5 +1,5 @@
 # ruff: noqa: E402
-"""Play Go2 policies with keyboard commands and optional PIE depth views."""
+"""Play Go2 policies with random or keyboard commands and optional depth views."""
 
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ _PYGAME: Any | None = None
 
 
 def _load_pygame() -> Any:
-    """Import pygame only when keyboard playback is requested."""
+    """Import pygame only for keyboard control or depth visualization."""
     global _PYGAME
     if _PYGAME is None:
         try:
             import pygame
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "Keyboard playback requires pygame. Install it with `pip install pygame`."
+                "Keyboard/depth playback requires pygame. Install it with `pip install pygame`."
             ) from exc
         _PYGAME = pygame
     return _PYGAME
@@ -78,20 +78,24 @@ def get_keyboard_command(
 
 
 class KeyboardController:
-    """Poll pygame and expose the current keyboard velocity command."""
+    """Display depth and optionally poll keyboard velocity commands."""
 
-    def __init__(self, cmd_limits: np.ndarray, depth: bool = False) -> None:
+    def __init__(self, cmd_limits: np.ndarray | None, depth: bool = False) -> None:
         self._pygame = _load_pygame()
         self._cmd_limits = cmd_limits
         self._pygame.init()
         self._screen = self._pygame.display.set_mode((1280, 380) if depth else (200, 100))
         self._pygame.display.set_caption(
-            "Go2 Keyboard Control / PIE Depth" if depth else "Go2 Keyboard Control"
+            "PIE Depth" if cmd_limits is None else (
+                "Go2 Keyboard Control / PIE Depth" if depth else "Go2 Keyboard Control"
+            )
         )
         self._font = self._pygame.font.Font(None, 23) if depth else None
-        print("Keyboard control: W/S=vx, A/D=vy, Q/E=yaw")
+        if cmd_limits is not None:
+            print("Keyboard control: W/S=vx, A/D=vy, Q/E=yaw")
 
     def read(self) -> np.ndarray:
+        assert self._cmd_limits is not None
         self._pygame.event.pump()
         keys = self._pygame.key.get_pressed()
         return get_keyboard_command(keys, self._cmd_limits, self._pygame)
@@ -105,12 +109,17 @@ class KeyboardController:
         """Display sensor metres and the exact cached policy frames for env 0."""
         assert self._font is not None
         pygame = self._pygame
+        pygame.event.pump()
         self._screen.fill((24, 24, 28))
 
         def label(text: str, x: int, y: int) -> None:
             self._screen.blit(self._font.render(text, True, (235, 235, 235)), (x, y))
 
-        label("Environment 0 | W/S=vx, A/D=vy, Q/E=yaw (focus this window)", 16, 10)
+        label(
+            "Environment 0 | W/S=vx, A/D=vy, Q/E=yaw (focus this window)"
+            if self._cmd_limits is not None else "Environment 0 | PIE depth visualization",
+            16, 10,
+        )
         panels = (
             ("Raw depth (m), current sensor", raw, cutoff),
             ("Policy depth [0, 1], oldest", history[0], 1.0),
@@ -144,7 +153,7 @@ class KeyboardController:
 
 
 class FixedCommandController:
-    """A constant velocity command for headless playback."""
+    """A constant velocity command explicitly requested with --command."""
 
     def __init__(self, command: tuple[float, float, float]) -> None:
         self._command = np.asarray(command, dtype=np.float32)
@@ -157,21 +166,25 @@ class FixedCommandController:
 
 
 class KeyboardCommandEnv:
-    """Inject the keyboard command before each policy observation."""
+    """Handle optional command overrides, depth views and policy resets."""
 
     def __init__(
         self,
         env: RslRlVecEnvWrapper,
-        keyboard: KeyboardController | FixedCommandController,
+        keyboard: KeyboardController | FixedCommandController | None,
         command_name: str,
         policy: Any = None,
         depth: bool = False,
+        depth_window: KeyboardController | None = None,
     ) -> None:
         self._env = env
         self._keyboard = keyboard
         self._command_name = command_name
         self._policy = policy
         self._depth = depth
+        self._depth_window = depth_window or (
+            keyboard if isinstance(keyboard, KeyboardController) else None
+        )
         self._command = env.unwrapped.command_manager.get_command(command_name)
 
         if self._command is None:
@@ -198,6 +211,8 @@ class KeyboardCommandEnv:
         return self._env.unwrapped
 
     def _update_command(self) -> None:
+        if self._keyboard is None:
+            return
         command = torch.as_tensor(
             self._keyboard.read(), device=self._command.device, dtype=self._command.dtype
         )
@@ -229,14 +244,14 @@ class KeyboardCommandEnv:
                 offset += width
 
     def initialize(self) -> None:
-        """Replace the reset-time random command in the observation cache."""
+        """Apply an optional command override and initialize depth panels."""
         self._update_command()
         self._update_depth(self._env.get_observations())
 
     def _update_depth(self, observations: Any) -> None:
         if not self._depth:
             return
-        assert isinstance(self._keyboard, KeyboardController)
+        assert self._depth_window is not None
         env = self._env.unwrapped
         params = env.cfg.observations["camera"].terms["front_depth"].params
         raw = env.scene[params["sensor_name"]].data.depth
@@ -248,7 +263,7 @@ class KeyboardCommandEnv:
         history = observations["camera"][0].reshape(
             params["frame_history_length"], height, width
         )
-        self._keyboard.show_depth(
+        self._depth_window.show_depth(
             raw[0, ..., 0].detach().cpu().numpy(),
             history.detach().cpu().numpy(),
             params["cutoff_distance"],
@@ -294,11 +309,14 @@ class PlayConfig:
     video_height: int | None = None
     video_width: int | None = None
     viewer: Literal["auto", "native", "viser"] = "auto"
+    keyboard: bool = False
+    """Use keyboard velocity commands instead of the environment's random commands."""
     depth: bool = False
-    """Show PIE raw depth and both processed policy frames in the keyboard window."""
+    """Show PIE raw depth and both processed policy frames in a separate window."""
     no_terminations: tyro.conf.FlagConversionOff[bool] = True
     headless_steps: int = 0
-    command: tuple[float, float, float] = (0.5, 0.0, 0.0)
+    command: tuple[float, float, float] | None = None
+    """Override random commands with a fixed vx/vy/yaw command; excludes --keyboard."""
 
 
 def _keyboard_command_limits(env_cfg: Any, command_name: str) -> np.ndarray:
@@ -341,6 +359,10 @@ def run_play(task_id: str, cfg: PlayConfig) -> None:
         raise ValueError("--headless-steps must be nonnegative.")
     if cfg.depth and cfg.headless_steps > 0:
         raise ValueError("--depth requires interactive playback; omit --headless-steps.")
+    if cfg.keyboard and cfg.headless_steps > 0:
+        raise ValueError("--keyboard requires interactive playback; omit --headless-steps.")
+    if cfg.keyboard and cfg.command is not None:
+        raise ValueError("Use either --keyboard or --command, not both.")
 
     if cfg.checkpoint_file is None:
         raise ValueError("Playback requires --checkpoint-file.")
@@ -366,7 +388,11 @@ def run_play(task_id: str, cfg: PlayConfig) -> None:
     if cfg.video_width is not None:
         env_cfg.viewer.width = cfg.video_width
 
-    cmd_limits = _keyboard_command_limits(env_cfg, cfg.command_name)
+    cmd_limits = None
+    if cfg.keyboard or cfg.command is not None:
+        cmd_limits = _keyboard_command_limits(env_cfg, cfg.command_name)
+    else:
+        print("[INFO] Using environment random velocity commands")
     render_mode = "rgb_array" if cfg.video else None
     env_cls = getattr(env_cfg, "class_type", ManagerBasedRlEnv)
     env: Any = env_cls(cfg=env_cfg, device=device, render_mode=render_mode)
@@ -407,12 +433,18 @@ def run_play(task_id: str, cfg: PlayConfig) -> None:
     attach_metadata_to_onnx(str(onnx_path), metadata)
     print(f"[INFO] Exported ONNX policy to {onnx_path}")
 
-    keyboard = (
-        FixedCommandController(cfg.command)
-        if cfg.headless_steps > 0
-        else KeyboardController(cmd_limits, depth=cfg.depth)
+    window = (
+        KeyboardController(cmd_limits if cfg.keyboard else None, depth=cfg.depth)
+        if cfg.keyboard or cfg.depth else None
     )
-    keyboard_env = KeyboardCommandEnv(vec_env, keyboard, cfg.command_name, policy, depth=cfg.depth)
+    controller = (
+        FixedCommandController(cfg.command) if cfg.command is not None else
+        window if cfg.keyboard else None
+    )
+    keyboard_env = KeyboardCommandEnv(
+        vec_env, controller, cfg.command_name, policy,
+        depth=cfg.depth, depth_window=window,
+    )
     resolved_viewer = _resolve_viewer(cfg.viewer)
 
     try:
@@ -430,7 +462,8 @@ def run_play(task_id: str, cfg: PlayConfig) -> None:
         else:
             ViserPlayViewer(keyboard_env, policy).run()
     finally:
-        keyboard.close()
+        if window is not None:
+            window.close()
         keyboard_env.close()
 
 
@@ -451,8 +484,7 @@ def main() -> None:
         args=remaining_args,
         default=PlayConfig(),
         prog=sys.argv[0] + f" {chosen_task}",
-        # Keep existing explicit boolean arguments while exposing --depth as
-        # a bare switch rather than requiring --depth True.
+        # Keep existing explicit booleans; --keyboard and --depth are bare switches.
         config=tuple(flag for flag in mjlab.TYRO_FLAGS if flag is not tyro.conf.FlagConversionOff),
     )
     run_play(chosen_task, args)

@@ -127,18 +127,26 @@ python test/validate_pie.py
 python test/validate_pie.py --checkpoint-file logs/rsl_rl/go2_pie/<run>/model_4.pt
 ```
 
-Keyboard playback and a bounded headless rollout:
+Random-command playback with depth, optional keyboard control, and a bounded
+headless rollout with a fixed command:
 
 ```bash
 python scripts/play.py Unitree-Go2-PIE \
   --checkpoint-file logs/rsl_rl/go2_pie/<run>/model_4.pt --depth
+python scripts/play.py Unitree-Go2-PIE \
+  --checkpoint-file logs/rsl_rl/go2_pie/<run>/model_4.pt --keyboard --depth
 python scripts/play.py Unitree-Go2-PIE \
   --checkpoint-file logs/rsl_rl/go2_pie/<run>/model_4.pt \
   --num-envs 4 --headless-steps 200 --command 0.5 0.0 0.0
 ```
 
 The default playback disables terminations, as for the existing tasks.
-Add `--depth` for three panels in the keyboard window: environment 0's raw
+Velocity commands are sampled by the environment by default (PIE resamples
+every 10 seconds), including headless playback. Add `--keyboard` to override
+them with W/S, A/D and Q/E, or explicitly use `--command vx vy yaw` for a fixed
+command. `--keyboard` requires interactive playback and excludes `--command`.
+
+Add `--depth` for three panels in a separate window: environment 0's raw
 106 x 60 sensor depth in metres, and both 86 x 60 policy input frames
 (oldest/newest). Policy panels read the actual cached camera observation,
 including training's crop, invalid-depth replacement, Gaussian blur, clipping,
@@ -146,8 +154,9 @@ normalization and 10 Hz history updates. The CNN's internal subtraction of
 0.5 follows these displayed [0, 1] observations. Raw depth updates at the
 sensor rate, so it can change while policy frames are held. All panels use
 a fixed near-to-far grayscale (white at 3 m); raw invalid pixels are magenta.
-Display clipping does not modify the sensor or policy inputs. Focus this
-window for keyboard commands. `--depth` requires interactive playback.
+Display clipping does not modify the sensor or policy inputs. With `--keyboard`,
+focus this window for keyboard commands. `--depth` works independently of
+`--keyboard` and requires interactive playback.
 
 Use `--no-terminations False` to exercise automatic resets. PIE's default
 training commands have zero lateral velocity and nonnegative forward speed.
