@@ -99,8 +99,8 @@ contract, recurrent ONNX inputs, smoke checks and visual ablations.
 | Script | Description |
 | --- | --- |
 | `scripts/play_motion_go2.py --motion-file <npz>` | Replay a reference motion clip on Go2 |
-| `scripts/validate_pie.py --checkpoint-file <pt>` | CPU recurrent replay and multi-step ONNX parity checks |
-| `scripts/evaluate_pie.py --checkpoint-file <pt>` | Fixed-level terrain evaluation with normal, frozen or delayed depth |
+| `test/validate_pie.py --checkpoint-file <pt>` | CPU recurrent replay and multi-step ONNX parity checks |
+| `test/evaluate_pie.py --checkpoint-file <pt>` | Fixed-level terrain evaluation with normal, frozen or delayed depth |
 
 
 scp -r ljl@192.168.1.122:/DATA/rl_ws/go2_mjlab/logs/rsl_rl/go2_amp_rough/2026-10-05_11-09-01_amp_rough logs/rsl_rl/go2_amp_rough

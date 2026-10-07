@@ -26,18 +26,13 @@ def track_linear_velocity(
   command_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Reward for tracking the commanded base linear velocity.
-
-  The commanded z velocity is assumed to be zero.
-  """
+  """Track commanded XY velocity, matching amp_go2's tracking reward."""
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
   assert command is not None, f"Command '{command_name}' not found."
   actual = asset.data.root_link_lin_vel_b
   xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
-  z_error = torch.square(actual[:, 2])
-  lin_vel_error = xy_error + (2 * z_error)
-  return torch.exp(-lin_vel_error / std**2)
+  return torch.exp(-xy_error / std**2)
 
 
 def track_angular_velocity(
@@ -131,33 +126,53 @@ def angular_momentum_penalty(
   return angmom_magnitude_sq
 
 
-def feet_air_time(
-  env: ManagerBasedRlEnv,
-  sensor_name: str,
-  threshold: float = 0.4,
-  command_name: str | None = None,
-  command_threshold: float = 0.1,
-) -> torch.Tensor:
-  """Reward feet air time."""
-  sensor: ContactSensor = env.scene[sensor_name]
-  sensor_data = sensor.data
-  air_time = sensor_data.current_air_time
-  contact_time = sensor_data.current_contact_time
-  in_contact = contact_time > 0.0
-  in_mode_time = torch.where(in_contact, contact_time, air_time)
-  single_stance = torch.mean(in_contact.float(), dim=1) == 0.5
-  mode_time = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
-  error = torch.abs(mode_time - threshold)
-  reward = torch.clamp(threshold - error, min=0.0)
-  if command_name is not None:
+class feet_air_time:
+  """Reward air duration above a threshold on landing, matching amp_go2.
+
+  Contact is filtered across two policy steps. Keep separate policy-rate
+  timers because sensor air-time tracking runs at the physics rate and uses
+  contact presence rather than amp_go2's vertical-force threshold.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    sensor: ContactSensor = env.scene[cfg.params["sensor_name"]]
+    if sensor.cfg.reduce != "netforce" and not sensor.cfg.global_frame:
+      raise ValueError("feet_air_time requires world-frame contact forces")
+    forces = sensor.data.force
+    assert forces is not None
+    self.air_time = torch.zeros_like(forces[..., 2])
+    self.last_contacts = torch.zeros_like(self.air_time, dtype=torch.bool)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    command_name: str,
+    threshold: float = 0.5,
+    command_threshold: float = 0.1,
+    force_threshold: float = 1.0,
+  ) -> torch.Tensor:
+    sensor: ContactSensor = env.scene[sensor_name]
+    forces = sensor.data.force
+    assert forces is not None
+    # MuJoCo reports primary (foot) -> secondary (terrain) force. Negate it
+    # to obtain the upward support force used by amp_go2's contact test.
+    contact = -forces[..., 2] > force_threshold
+    contact_filtered = contact | self.last_contacts
+    self.last_contacts.copy_(contact)
+    first_contact = (self.air_time > 0.0) & contact_filtered
+    self.air_time.add_(env.step_dt)
+    reward = torch.sum((self.air_time - threshold) * first_contact, dim=1)
+    self.air_time.masked_fill_(contact_filtered, 0.0)
     command = env.command_manager.get_command(command_name)
-    if command is not None:
-      linear_norm = torch.norm(command[:, :2], dim=1)
-      angular_norm = torch.abs(command[:, 2])
-      total_command = linear_norm + angular_norm
-      scale = (total_command > command_threshold).float()
-      reward *= scale
-  return reward
+    assert command is not None
+    return reward * (torch.norm(command[:, :2], dim=1) > command_threshold)
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    if env_ids is None:
+      env_ids = slice(None)
+    self.air_time[env_ids] = 0.0
+    self.last_contacts[env_ids] = False
 
 
 def feet_clearance(

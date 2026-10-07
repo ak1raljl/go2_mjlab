@@ -306,8 +306,19 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
     ),
     "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight=-200.0),
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight=-2.5e-7),
-    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-10.0),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.05),
+    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-2.0),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
+    "feet_air_time": RewardTermCfg(
+      func=mdp.feet_air_time,
+      weight=1.0,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "command_name": "twist",
+        "threshold": 0.5,
+        "command_threshold": 0.1,
+        "force_threshold": 1.0,
+      },
+    ),
     # "foot_gait": RewardTermCfg(
     #   func=mdp.feet_gait,
     #   weight=0.5,

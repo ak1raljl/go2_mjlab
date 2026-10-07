@@ -123,8 +123,8 @@ CPU checks cover recurrent replay with asynchronous resets, action log
 probabilities, masked auxiliary gradients and sequential ONNX parity:
 
 ```bash
-python scripts/validate_pie.py
-python scripts/validate_pie.py --checkpoint-file logs/rsl_rl/go2_pie/<run>/model_4.pt
+python test/validate_pie.py
+python test/validate_pie.py --checkpoint-file logs/rsl_rl/go2_pie/<run>/model_4.pt
 ```
 
 Keyboard playback and a bounded headless rollout:
@@ -148,11 +148,11 @@ command and episode duration. The evaluator disables observation noise,
 pushes and curriculum changes; startup domain randomization remains.
 
 ```bash
-python scripts/evaluate_pie.py --checkpoint-file <checkpoint.pt> \
+python test/evaluate_pie.py --checkpoint-file <checkpoint.pt> \
   --terrain-level 0 --depth-mode normal --output outputs/pie_normal.json
-python scripts/evaluate_pie.py --checkpoint-file <checkpoint.pt> \
+python test/evaluate_pie.py --checkpoint-file <checkpoint.pt> \
   --terrain-level 0 --depth-mode frozen --output outputs/pie_frozen.json
-python scripts/evaluate_pie.py --checkpoint-file <checkpoint.pt> \
+python test/evaluate_pie.py --checkpoint-file <checkpoint.pt> \
   --terrain-level 0 --depth-mode delayed --depth-delay-steps 5 \
   --output outputs/pie_delayed.json
 ```
