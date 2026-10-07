@@ -182,7 +182,7 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
       heading_control_stiffness=0.5,
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
-        lin_vel_x=(-1.0, 3.0),
+        lin_vel_x=(-1.0, 2.0),
         lin_vel_y=(-1.0, 1.0),
         ang_vel_z=(-1.0, 1.0),
         heading=(-math.pi, math.pi),
@@ -268,12 +268,12 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
-      weight=2.0,
+      weight=5.0,
       params={"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=1.0,
+      weight=2.0,
       params={"command_name": "twist", "std": math.sqrt(0.5)},
     ),
     "body_orientation_l2": RewardTermCfg(
@@ -381,16 +381,16 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
       func=mdp.terrain_levels_vel,
       params={"command_name": "twist"},
     ),
-    "command_vel": CurriculumTermCfg(
-      func=mdp.commands_vel,
-      params={
-        "command_name": "twist",
-        "velocity_stages": [
-          {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
-          {"step": 3000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0)},
-        ],
-      },
-    ),
+    # "command_vel": CurriculumTermCfg(
+    #   func=mdp.commands_vel,
+    #   params={
+    #     "command_name": "twist",
+    #     "velocity_stages": [
+    #       {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
+    #       {"step": 3000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0)},
+    #     ],
+    #   },
+    # ),
   }
 
   ##

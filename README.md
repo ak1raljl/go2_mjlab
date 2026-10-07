@@ -35,6 +35,7 @@ pip install -e .
 | `Unitree-Go2-Rough` | Velocity tracking on rough terrain |
 | `Unitree-Go2-AMP-Loco` | Flat velocity tracking with AMP style rewards |
 | `Unitree-Go2-AMP-Rough` | AMP locomotion on generated rough terrain with critic-only scan |
+| `Unitree-Go2-PIE` | Recurrent depth-based locomotion on flat terrain and stairs |
 
 ```bash
 python scripts/list_envs.py --keyword Go2
@@ -47,6 +48,7 @@ python scripts/train.py Unitree-Go2-Flat  --gpu-ids '[0]' --env.scene.num-envs 4
 python scripts/train.py Unitree-Go2-Rough --gpu-ids '[0]' --env.scene.num-envs 4096 --agent.run-name rough
 python scripts/train.py Unitree-Go2-AMP-Loco --gpu-ids '[0]' --env.scene.num-envs 4096 --agent.run-name amp
 python scripts/train.py Unitree-Go2-AMP-Rough --gpu-ids '[0]' --env.scene.num-envs 4096 --agent.run-name amp_rough
+python scripts/train.py Unitree-Go2-PIE --gpu-ids '[0]' --env.scene.num-envs 128 --agent.run-name pie
 ```
 <details>
 <summary><b>Script arguments</b></summary>
@@ -87,9 +89,20 @@ python scripts/play.py Unitree-Go2-Flat --checkpoint-file logs/rsl_rl/go2_veloci
 
 Keyboard control: `W`/`S` forward/backward, `A`/`D` lateral, `Q`/`E` yaw.
 
+PIE uses two depth frames, ten steps of proprioception and a GRU. It defaults
+to 128 training environments to limit visual rollout memory. See
+[PIE training, validation and deployment](src/tasks/pie/README.md) for the observation
+contract, recurrent ONNX inputs, smoke checks and visual ablations.
+
 ## Other scripts
 
 | Script | Description |
 | --- | --- |
 | `scripts/play_motion_go2.py --motion-file <npz>` | Replay a reference motion clip on Go2 |
+| `scripts/validate_pie.py --checkpoint-file <pt>` | CPU recurrent replay and multi-step ONNX parity checks |
+| `scripts/evaluate_pie.py --checkpoint-file <pt>` | Fixed-level terrain evaluation with normal, frozen or delayed depth |
 
+
+scp -r ljl@192.168.1.122:/DATA/rl_ws/go2_mjlab/logs/rsl_rl/go2_amp_rough/2026-10-05_11-09-01_amp_rough logs/rsl_rl/go2_amp_rough
+
+python scripts/play.py Unitree-Go2-AMP-Rough --checkpoint-file logs/rsl_rl/go2_amp_rough/2026-10-05_11-09-01_amp_rough/model_1000.pt

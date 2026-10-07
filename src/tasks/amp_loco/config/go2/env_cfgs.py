@@ -114,10 +114,10 @@ def _unitree_go2_amp_loco_base_env_cfg(
   # cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 
-  cfg.terminations["illegal_contact"] = TerminationTermCfg(
-    func=mdp.illegal_contact,
-    params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
-  )
+  # cfg.terminations["illegal_contact"] = TerminationTermCfg(
+  #   func=mdp.illegal_contact,
+  #   params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
+  # )
 
   # Apply play mode overrides.
   if play:
@@ -243,8 +243,8 @@ def unitree_go2_amp_rough_env_cfg(play: bool = False) -> AmpLocoEnvCfg:
     cfg.events = {"randomize_terrain": randomize_terrain, **cfg.events}
     twist_cmd = cfg.commands["twist"]
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
-    twist_cmd.ranges.lin_vel_x = (-0.5, 1.0)
-    twist_cmd.ranges.lin_vel_y = (-0.5, 0.5)
-    twist_cmd.ranges.ang_vel_z = (-0.5, 0.5)
+    twist_cmd.ranges.lin_vel_x = (-1.0, 1.2)
+    twist_cmd.ranges.lin_vel_y = (-1.0, 1.0)
+    twist_cmd.ranges.ang_vel_z = (-1.0, 1.0)
 
   return cfg

@@ -67,7 +67,7 @@ def unitree_go2_amp_loco_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     logger="tensorboard",
     save_interval=1000,
     num_steps_per_env=24,
-    max_iterations=10001,
+    max_iterations=50001,
   )
 
 
