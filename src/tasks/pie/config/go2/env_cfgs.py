@@ -564,10 +564,15 @@ def unitree_go2_pie_env_cfg(play: bool = False) -> PIEEnvCfg:
 
   if play:
     cfg.episode_length_s = int(1e9)
-    cfg.events.pop("push_robot", None)
-    cfg.events.pop("camera_position", None)
-    cfg.events.pop("camera_pitch", None)
-    cfg.events.pop("camera_fovy", None)
+    cfg.commands["twist"].resample_on_reset_only = True
+    # Playback uses nominal robot/camera parameters and no external disturbances.
+    # Keep the state-reset events required to start a new episode.
+    cfg.events = {
+      name: cfg.events[name] for name in ("reset_base", "reset_robot_joints")
+    }
+    cfg.events["reset_robot_joints"].params.update(
+      position_range=(0.0, 0.0), velocity_range=(0.0, 0.0),
+    )
     cfg.curriculum = {}
     cfg.events["randomize_terrain"] = EventTermCfg(
       func=envs_mdp.randomize_terrain,

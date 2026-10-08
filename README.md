@@ -36,6 +36,7 @@ pip install -e .
 | `Unitree-Go2-AMP-Loco` | Flat velocity tracking with AMP style rewards |
 | `Unitree-Go2-AMP-Rough` | AMP locomotion on generated rough terrain with critic-only scan |
 | `Unitree-Go2-PIE` | Recurrent depth-based locomotion on flat terrain and stairs |
+| `Unitree-Go2-PIE-Parkour` | PIE with external velocity guidance on randomized obstacles, rough ground, smooth stairs and slopes |
 
 ```bash
 python scripts/list_envs.py --keyword Go2
@@ -103,6 +104,9 @@ contract, recurrent ONNX inputs, smoke checks and visual ablations.
 | `test/evaluate_pie.py --checkpoint-file <pt>` | Fixed-level terrain evaluation with normal, frozen or delayed depth |
 
 
-scp -r ljl@192.168.1.122:/DATA/rl_ws/go2_mjlab/logs/rsl_rl/go2_amp_rough/2026-10-05_11-09-01_amp_rough logs/rsl_rl/go2_amp_rough
+```bash
+python scripts/play.py Unitree-Go2-AMP-Rough --checkpoint-file logs/rsl_rl/go2_amp_rough/2026-10-07_11-40-46_amp_rough/model_24000.pt --keyboard
 
-python scripts/play.py Unitree-Go2-AMP-Rough --checkpoint-file logs/rsl_rl/go2_amp_rough/2026-10-05_11-09-01_amp_rough/model_1000.pt
+python scripts/play_pie.py --checkpoint-file logs/rsl_rl/go2_pie/2026-10-07_11-16-08_pie/model_2000.pt  --depth
+
+```

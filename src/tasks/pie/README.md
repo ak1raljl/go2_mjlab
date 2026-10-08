@@ -7,6 +7,137 @@ Its terrain set is flat ground (10%), ascending stairs (45%) and descending
 stairs (45%), with step heights from 0.03 to 0.25 m. This implementation does
 not establish gap-jumping or other parkour capabilities.
 
+## PIE Parkour task
+
+Preview all terrain types and difficulties without a checkpoint or GPU:
+
+```bash
+python scripts/view_pie_terrains.py
+# Open http://127.0.0.1:8080 in a browser.
+python scripts/view_pie_terrains.py --seed 123 --port 8081
+# Generate/validate the full gallery without starting a server:
+python scripts/view_pie_terrains.py --check
+```
+
+The interactive gallery contains nine terrain columns and ten difficulty
+rows (0–9), generated directly from `parkour_terrains.py`. Select a terrain
+and/or level to focus on it; toggle route markers, waypoint numbers and labels.
+Green marks the spawn, orange marks the ordered route. Difficulty is exactly
+`level / 9`, as in `play_pie.py`; training samples within difficulty bands.
+The preview generates an independent random layout for each tile. Change
+`--seed` to inspect different layouts at the same level; `--shared-layout`
+reuses random draws across levels to isolate difficulty changes.
+Restart the script after editing the terrain code. For a remote machine,
+forward port 8080 over SSH or through your editor.
+
+`Unitree-Go2-PIE-Parkour` adds a separate terrain/task configuration inspired by
+the local `thirdparty/extreme-parkour` implementation. It retains PIE's network,
+observation dimensions, depth processing and auxiliary losses. The policy
+receives **body-frame `[vx, vy, yaw_rate]` commands directly**. An external
+controller converts the next terrain waypoint and a randomly sampled speed
+into these commands; no waypoint coordinates, heading labels or learned
+direction-prediction branch are added to the actor.
+
+Each 18 x 4 m tile supplies eight ordered support points. The training speed is sampled
+from 0.3–1.2 m/s every six seconds, with lateral commands limited to ±0.35 m/s
+and yaw rate to ±1.2 rad/s. A waypoint counts after reaching/crossing it with
+foot support at the corresponding height. Completing all points ends the
+episode; falling, torso collisions and leaving the tile terminate it. Training
+raises terrain difficulty after successful traversal and lowers it after
+failure or insufficient progress. Episodes last at most 40 seconds.
+
+| Terrain | Weight | Difficulty range |
+| --- | --- | --- |
+| `flat` | 10% | Ground with stronger surface roughness |
+| `hurdle` | 15% | Six randomly spaced hurdles, nominal height 0.05–0.75 m |
+| `step` | 15% | Six terraces with random lengths, increments 0.03–0.35 m |
+| `gap` | 15% | Six randomly spaced gaps, width 0.10–1.0 m |
+| `platform` | 15% | Random 1–3 platforms, length 1.4–2.2 m, height 0.05–0.75 m |
+| `stairs_up` | 10% | Eight smooth 0.30 m treads, rise 0.03–0.25 m |
+| `stairs_down` | 10% | Smooth descending counterpart |
+| `slope_up` | 5% | Uphill ramp, inclination 5–25 degrees, length 4–6 m |
+| `slope_down` | 5% | Downhill counterpart |
+
+Hurdle/gap spacing varies within each tile, including at fixed difficulty.
+Placement preserves at least 1.1 m of clear ground between obstacles. Platform
+count, length, position and lateral offset are sampled per tile, with at least
+1.6 m between platforms. Every platform has a top waypoint and a landing
+waypoint; shorter routes add ground waypoints to retain eight valid points.
+Stair and slope starting positions also vary. Geometry is sampled when the
+terrain map is generated, not regenerated on every environment reset.
+
+The obstacle layout is built from rectangular sections. Except for smooth
+stairs, sections are converted to solid MuJoCo heightfields with physical
+surface roughness, including obstacle tops and gap bottoms. Slopes use
+continuous height profiles with roughness added. Separate heightfields
+preserve vertical boundaries and gap widths. Spawn/goal heights follow the
+actual rough surface. These are adaptations, not identical Isaac Gym terrains.
+Hurdle/platform heights also have per-obstacle variation.
+
+Roughness amplitude is sampled once per tile: **0.04–0.10 m for flat**, and
+**0.02–0.06 m for obstacles and slopes**, and **zero for both stair types**.
+Heights vary on both sides of the nominal
+surface; these ranges describe amplitude, not peak-to-peak height. Quantized
+uniform noise uses 0.005 m vertical increments on a 0.075 m coarse grid and is
+interpolated onto a grid with at most 0.05 m spacing. Roughness is active at
+every difficulty, as in the reference's `add_roughness()` default. The parameters
+live in `ParkourTerrainCfg` and the per-type overrides in `PIE_PARKOUR_TERRAINS_CFG`.
+Set `roughness_height_range=(0.0, 0.0)` to compare with smooth terrain.
+Training, playback and the gallery all use this same terrain generator.
+The reward favors progress toward the route at the requested speed, retains
+yaw tracking, and relaxes pitch/roll and vertical-velocity penalties on
+obstacles. Fixed gait-phase and standing-height rewards are removed to allow
+jumping. Training results must establish whether the harder obstacles are
+actually traversable by the learned policy.
+
+```bash
+python scripts/train.py Unitree-Go2-PIE-Parkour --gpu-ids '[0]' \
+  --env.scene.num-envs 128 --agent.run-name pie_parkour
+```
+
+Logs and checkpoints use `logs/rsl_rl/go2_pie_parkour/`. The original PIE task
+remains available. Existing PIE checkpoints load because the policy contract
+is unchanged; they need further training to acquire the new obstacle skills.
+
+The dedicated playback entry is `scripts/play_pie.py`:
+
+```bash
+# Defaults to route guidance with a speed sampled once at each reset.
+python scripts/play_pie.py --checkpoint-file <checkpoint.pt> --depth
+
+# Direct user velocity control; no automatic route steering.
+python scripts/play_pie.py --checkpoint-file <checkpoint.pt> --keyboard --depth
+
+# Select a terrain/difficulty and use a fixed route speed.
+python scripts/play_pie.py --checkpoint-file <checkpoint.pt> \
+  --terrain gap --terrain-level 3 --speed 0.8 --depth
+
+# Bounded playback with a direct body-frame velocity command.
+python scripts/play_pie.py --checkpoint-file <checkpoint.pt> \
+  --terrain flat --command 0.5 0.1 0.0 --num-envs 4 --headless-steps 200 \
+  --stats-file outputs/pie_parkour_play.json
+
+# Replay the original task using the same standalone entry.
+python scripts/play_pie.py --task Unitree-Go2-PIE \
+  --checkpoint-file <checkpoint.pt> --depth
+```
+
+`--terrain-level` fixes difficulty from 0 to 9. With `--terrain all`, resets
+sample a terrain family uniformly. Terminations and recurrent-state resets
+remain enabled. `--depth` displays raw sensor depth and the two cached input
+frames actually supplied to the policy, using the training preprocessing.
+`--keyboard`, `--command`, and `--speed` are mutually exclusive. Direct controls
+bypass route advancement, so their statistics are not route success estimates.
+Add `--export` to explicitly write ONNX beside the checkpoint.
+
+Playback samples the route speed only on reset and holds it throughout the
+episode. Body-frame velocity components and yaw rate still follow the current
+route direction. Pushes and all startup randomization (friction, mass, COM,
+encoder bias, gains, motor strength and camera) are disabled; joint resets
+use the nominal pose and zero velocity. Only robot state reset and terrain
+selection events remain. Training keeps periodic speed sampling and its
+original randomization events.
+
 ## Train and resume
 
 Use the existing `go2_mjlab` conda environment. Registration:
@@ -141,8 +272,8 @@ python scripts/play.py Unitree-Go2-PIE \
 ```
 
 The default playback disables terminations, as for the existing tasks.
-Velocity commands are sampled by the environment by default (PIE resamples
-every 10 seconds), including headless playback. Add `--keyboard` to override
+Velocity commands are sampled once at each reset and held for the episode,
+including headless playback. Add `--keyboard` to override
 them with W/S, A/D and Q/E, or explicitly use `--command vx vy yaw` for a fixed
 command. `--keyboard` requires interactive playback and excludes `--command`.
 
@@ -165,7 +296,7 @@ training commands have zero lateral velocity and nonnegative forward speed.
 
 Evaluate trained checkpoints at fixed terrain levels with the same seed,
 command and episode duration. The evaluator disables observation noise,
-pushes and curriculum changes; startup domain randomization remains.
+pushes, startup domain randomization and curriculum changes.
 
 ```bash
 python test/evaluate_pie.py --checkpoint-file <checkpoint.pt> \

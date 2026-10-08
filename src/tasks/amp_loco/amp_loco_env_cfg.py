@@ -416,7 +416,7 @@ def make_amp_loco_env_cfg() -> AmpLocoEnvCfg:
         max_init_terrain_level=5,
       ),
       # sensors=(terrain_scan,),
-      num_envs=64,
+      num_envs=1,
       extent=2.0,
     ),
     observations=observations,

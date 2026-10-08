@@ -175,7 +175,11 @@ class UniformVelocityCommand(CommandTerm):
     self._joystick_get_env_idx = get_env_idx
 
   def compute(self, dt: float) -> None:
-    super().compute(dt)
+    if self.cfg.resample_on_reset_only:
+      self._update_metrics()
+      self._update_command()
+    else:
+      super().compute(dt)
     if self._joystick_enabled is not None and self._joystick_enabled.value:
       assert self._joystick_get_env_idx is not None
       idx = self._joystick_get_env_idx()
@@ -260,6 +264,8 @@ class UniformVelocityCommand(CommandTerm):
 @dataclass(kw_only=True)
 class UniformVelocityCommandCfg(CommandTermCfg):
   entity_name: str
+  resample_on_reset_only: bool = False
+  """Keep the reset-sampled command until the next reset, ignoring its timer."""
   heading_command: bool = False
   heading_control_stiffness: float = 1.0
   rel_standing_envs: float = 0.0

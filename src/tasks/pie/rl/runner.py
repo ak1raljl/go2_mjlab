@@ -19,6 +19,13 @@ class PIEOnPolicyRunner(MjlabOnPolicyRunner):
     camera = next(s for s in env.cfg.scene.sensors if s.name == depth["sensor_name"])
     metadata.update({
       "policy_type": "pie",
+      "velocity_command_layout": "body_vx_m_s,body_vy_m_s,body_yaw_rate_rad_s",
+      "velocity_command_source": (
+        "external-route-controller-or-user"
+        if hasattr(env.command_manager.get_term("twist"), "goal_index")
+        else "environment-or-user"
+      ),
+      "policy_predicts_route_direction": "false",
       "pie_contract_version": "1",
       "observation_history_layout": "term-major",
       "observation_history_length": str(actor.history_length),
