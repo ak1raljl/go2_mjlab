@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import torch
 
 from mjlab.entity import Entity
@@ -11,9 +12,42 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
+  from mjlab.managers.curriculum_manager import CurriculumTermCfg
 
 
 _DEFAULT_SCENE_CFG = SceneEntityCfg("robot")
+
+
+class terrain_level_mean:
+  """Report one terrain's mean level, following AMP Rough's logging convention."""
+
+  def __init__(self, cfg: CurriculumTermCfg, env: ManagerBasedRlEnv):
+    terrain = env.scene.terrain
+    assert terrain is not None
+    generator = terrain.cfg.terrain_generator
+    assert generator is not None and generator.curriculum
+    # Resolve the actual column allocation after CLI overrides, using mjlab's
+    # normalized proportions and the same +0.001 boundary offset.
+    names = list(generator.sub_terrains)
+    proportions = np.array([sub.proportion for sub in generator.sub_terrains.values()])
+    column_types = np.searchsorted(
+      np.cumsum(proportions / proportions.sum()),
+      np.arange(generator.num_cols) / generator.num_cols + 0.001,
+      side="right",
+    )
+    name = cfg.params["terrain_name"]
+    columns = np.flatnonzero(column_types == names.index(name)) if name in names else []
+    self.columns = torch.tensor(columns, device=terrain.terrain_types.device, dtype=torch.long)
+
+  def __call__(
+    self, env: ManagerBasedRlEnv, env_ids: torch.Tensor, terrain_name: str
+  ) -> torch.Tensor | None:
+    del env_ids, terrain_name  # Average all assigned environments, not only resets.
+    terrain = env.scene.terrain
+    mask = torch.isin(terrain.terrain_types, self.columns)
+    if not mask.any():
+      return None  # Unassigned terrain types have no meaningful mean level.
+    return terrain.terrain_levels[mask].float().mean()
 
 
 def _terrain_level_moves(

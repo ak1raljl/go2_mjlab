@@ -95,7 +95,15 @@ python scripts/train.py Unitree-Go2-PIE-Parkour --gpu-ids '[0]' \
   --env.scene.num-envs 128 --agent.run-name pie_parkour
 ```
 
-Logs and checkpoints use `logs/rsl_rl/go2_pie_parkour/`. The original PIE task
+Logs and checkpoints use `logs/rsl_rl/go2_pie_parkour/`. Terrain-level logs follow
+AMP Rough's convention: `Curriculum/terrain_levels` is the overall mean, and
+`Curriculum/terrain_levels/<terrain_name>` reports each of the nine terrain
+types (flat, hurdle, step, gap, platform, stairs_up/down and slope_up/down).
+Each mean includes all environments assigned to that type, after the curriculum
+update, not just the environments resetting on that step. Types with no assigned
+environments are omitted instead of reporting a misleading zero.
+
+The original PIE task
 remains available. Existing PIE checkpoints load because the policy contract
 is unchanged; they need further training to acquire the new obstacle skills.
 

@@ -58,6 +58,13 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
   cfg.terminations["route_failed"] = TerminationTermCfg(func=parkour.route_failed)
   cfg.curriculum = {} if play else {
     "terrain_levels": CurriculumTermCfg(func=parkour.route_curriculum),
+    # Log after the single curriculum update; these terms only read levels.
+    **{
+      f"terrain_levels/{name}": CurriculumTermCfg(
+        func=mdp.terrain_level_mean, params={"terrain_name": name},
+      )
+      for name in cfg.scene.terrain.terrain_generator.sub_terrains
+    },
   }
   if play:
     # Keep one column per kind so random playback never omits a terrain family.
