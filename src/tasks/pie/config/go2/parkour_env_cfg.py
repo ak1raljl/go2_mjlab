@@ -47,7 +47,14 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
     fields=("found", "force"), reduce="netforce", num_slots=1, history_length=2,
   )
   cfg.scene.sensors = (*cfg.scene.sensors, torso_contact)
-  cfg.terminations["fell_over"].params["limit_angle"] = math.radians(80)
+  cfg.terminations["fell_over"] = TerminationTermCfg(
+    func=mdp.grounded_bad_orientation,
+    params={
+      "limit_angle": math.radians(85),
+      "duration_s": 0.5,
+      "sensor_names": ("feet_ground_contact", "nonfoot_ground_touch"),
+    },
+  )
   # cfg.terminations["illegal_contact"] = TerminationTermCfg(
   #   func=mdp.illegal_contact,
   #   params={"sensor_name": "torso_ground_contact", "force_threshold": 10.0},
