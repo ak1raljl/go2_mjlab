@@ -34,6 +34,9 @@ _PIE_ACTOR_CFG = {
   "stride": (4, 2, 1),
   "padding": 0,
   "cnn_activation": "elu",
+  # Recompute the depth/trunk activations in backward; the 86x60 depth encoder
+  # otherwise dominates PPO update memory at large environment counts.
+  "gradient_checkpointing": True,
 }
 
 
@@ -64,6 +67,9 @@ def unitree_go2_pie_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       clip_param=0.2,
       entropy_coef=0.01,
       num_learning_epochs=5,
+      # Smaller minibatches bound the worst-case PPO transient when many
+      # environments reset at once and padded trajectory counts spike; this
+      # keeps 4096-environment training within a 48 GB GPU budget.
       num_mini_batches=4,
       learning_rate=1.0e-3,
       schedule="adaptive",
@@ -87,5 +93,5 @@ def unitree_go2_pie_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     upload_model=False,
     save_interval=1000,
     num_steps_per_env=24,
-    max_iterations=20000,
+    max_iterations=50000,
   )

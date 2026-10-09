@@ -95,7 +95,7 @@ class PIEPPO(PPO):
             batch.advantages.std() + 1.0e-8
           )
 
-      self.actor(
+      _actions, auxiliary_losses = self.actor.forward_with_auxiliary(
         batch.observations,
         masks=batch.masks,
         hidden_state=batch.hidden_states[0],
@@ -156,11 +156,6 @@ class PIEPPO(PPO):
       else:
         value_loss = (batch.returns - values).square().mean()
 
-      auxiliary_losses = self.actor.auxiliary_losses(
-        batch.observations,
-        masks=batch.masks,
-        hidden_state=batch.hidden_states[0],
-      )
       weighted_auxiliary = sum(
         self.auxiliary_coefficients[name] * auxiliary_losses[name]
         for name in self.auxiliary_coefficients

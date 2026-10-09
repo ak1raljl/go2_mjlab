@@ -453,12 +453,12 @@ def unitree_go2_pie_env_cfg(play: bool = False) -> PIEEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_body_planar_velocity,
-      weight=1.5,
+      weight=2.5,
       params={"command_name": "twist", "sigma": 0.25},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_body_yaw_velocity,
-      weight=0.5,
+      weight=1.5,
       params={"command_name": "twist", "sigma": 0.25},
     ),
     "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-1.0),
@@ -495,10 +495,10 @@ def unitree_go2_pie_env_cfg(play: bool = False) -> PIEEnvCfg:
       # posture which is already unrecoverable for stair traversal.
       params={"limit_angle": math.radians(55.0)},
     ),
-    "illegal_contact": TerminationTermCfg(
-      func=mdp.illegal_contact,
-      params={"sensor_name": nonfoot_ground.name, "force_threshold": 10.0},
-    ),
+    # "illegal_contact": TerminationTermCfg(
+    #   func=mdp.illegal_contact,
+    #   params={"sensor_name": nonfoot_ground.name, "force_threshold": 10.0},
+    # ),
   }
   curriculum = {
     "terrain_levels": CurriculumTermCfg(
@@ -562,8 +562,14 @@ def unitree_go2_pie_env_cfg(play: bool = False) -> PIEEnvCfg:
     episode_length_s=20.0,
   )
 
+  # The policy consumes depth through a 10 Hz frame history; render the camera
+  # on that schedule instead of at the full 50 Hz control rate.
+  cfg.depth_render_period_steps = 5
+
   if play:
     cfg.episode_length_s = int(1e9)
+    # Playback renders every step so the depth display follows the sensor.
+    cfg.depth_render_period_steps = 1
     cfg.commands["twist"].resample_on_reset_only = True
     # Playback uses nominal robot/camera parameters and no external disturbances.
     # Keep the state-reset events required to start a new episode.

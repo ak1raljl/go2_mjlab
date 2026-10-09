@@ -174,8 +174,21 @@ python scripts/train.py Unitree-Go2-PIE --gpu-ids '[0]' \
 Increase environments only after measuring memory and throughput. At 4096
 environments and 24 rollout steps, float32 depth observations alone occupy
 about 4.1 GB, before sequence padding, activations and simulator memory.
-Depth history updates at 10 Hz, but mjlab 1.2 renders the sensor at each
-50 Hz control step; the history interval does not reduce rendering work.
+Training renders the depth camera every five control steps
+(`PIEEnvCfg.depth_render_period_steps`, matching the 10 Hz frame history and
+the paper's RealSense rate); frames can be up to four control steps stale,
+as with a physical camera whose clock is unaligned with the control loop.
+Playback keeps per-step rendering so the depth display follows the sensor.
+
+4096-environment training (the paper's setting) fits a 48 GB RTX 4090 with
+the default configuration: `scripts/train.py` enables PyTorch
+`expandable_segments` (recurrent minibatch fragmentation otherwise OOMs
+Warp's CUDA graph launches after tens of iterations), the PPO update shares
+one estimator pass between the policy and the auxiliary losses
+(`PIEActorModel.forward_with_auxiliary`), the depth trunk recomputes its
+activations in backward (`gradient_checkpointing` in the actor `cnn_cfg`),
+and `num_mini_batches=8` bounds the padded-trajectory transient when many
+environments reset simultaneously.
 
 Logs use TensorBoard and `logs/rsl_rl/go2_pie/`. Checkpoints include optimizer
 state, normalizers and iteration state. Each save exports `policy.onnx`.

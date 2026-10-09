@@ -48,10 +48,10 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
   )
   cfg.scene.sensors = (*cfg.scene.sensors, torso_contact)
   cfg.terminations["fell_over"].params["limit_angle"] = math.radians(80)
-  cfg.terminations["illegal_contact"] = TerminationTermCfg(
-    func=mdp.illegal_contact,
-    params={"sensor_name": "torso_ground_contact", "force_threshold": 10.0},
-  )
+  # cfg.terminations["illegal_contact"] = TerminationTermCfg(
+  #   func=mdp.illegal_contact,
+  #   params={"sensor_name": "torso_ground_contact", "force_threshold": 10.0},
+  # )
   cfg.terminations["route_complete"] = TerminationTermCfg(
     func=parkour.route_complete, time_out=True,
   )

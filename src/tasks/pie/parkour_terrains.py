@@ -64,7 +64,7 @@ class ParkourTerrainCfg(SubTerrainCfg):
   slope_length_range: tuple[float, float] = (4.0, 6.0)
   # Reference Extreme Parkour roughness; stairs explicitly remain smooth.
   roughness_height_range: tuple[float, float] = (0.02, 0.06)
-  roughness_horizontal_scale: float = 0.05
+  roughness_horizontal_scale: float = 0.3
   roughness_downsampled_scale: float = 0.075
   roughness_vertical_scale: float = 0.005
   flat_patch_sampling: dict[str, FlatPatchSamplingCfg] = field(default_factory=lambda: {

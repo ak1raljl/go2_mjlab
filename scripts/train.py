@@ -47,6 +47,11 @@ class TrainConfig:
 
 
 def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
+    # Variable-length recurrent minibatches fragment the default PyTorch
+    # allocator; expandable segments stop the reserved-memory creep that
+    # otherwise OOMs Warp's CUDA graph launches mid-training.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if cuda_visible == "":
         device = "cpu"

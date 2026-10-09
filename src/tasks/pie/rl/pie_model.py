@@ -7,6 +7,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint
 from rsl_rl.modules import EmpiricalNormalization, MLP
 from rsl_rl.modules.distribution import Distribution
 from rsl_rl.utils import resolve_callable, resolve_nn_activation, unpad_trajectories
@@ -105,6 +106,9 @@ class PIEActorModel(nn.Module):
     self.vae_latent_dim = int(cfg.get("vae_latent_dim", 16))
     self.memory_hidden_dim = int(cfg.get("memory_hidden_dim", 128))
     self.memory_num_layers = int(cfg.get("memory_num_layers", 1))
+    # Recompute the encoder trunk during backward instead of retaining its
+    # activations. Depth-heavy minibatches otherwise dominate PPO memory.
+    self.gradient_checkpointing = bool(cfg.get("gradient_checkpointing", False))
     self.obs_normalization = bool(obs_normalization)
     if self.obs_normalization:
       self.proprio_normalizer = EmpiricalNormalization(self.proprio_dim)
@@ -234,7 +238,53 @@ class PIEActorModel(nn.Module):
       update_internal=False,
       sample_latent=True,
     )
-    successor_hat = self.successor_decoder(estimates["latent"])
+    return self._auxiliary_losses_from_estimates(estimates, obs, masks)
+
+  def forward_with_auxiliary(
+    self,
+    obs: TensorDict,
+    masks: torch.Tensor | None = None,
+    hidden_state=None,
+    stochastic_output: bool = False,
+  ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Run the estimator once for both the policy and the auxiliary losses.
+
+    Numerically identical to calling ``forward`` followed by
+    ``auxiliary_losses``, but shares the encoder/GRU pass and its autograd
+    graph instead of building it twice per minibatch.
+    """
+    estimates, _new_hidden = self._estimate_tensors(
+      obs[self.proprio_group],
+      obs[self.history_group],
+      obs[self.depth_group],
+      masks=masks,
+      hidden_state=hidden_state,
+      update_internal=False,
+      sample_latent=True,
+    )
+    actor_input = torch.cat(
+      [self.proprio_normalizer(obs[self.proprio_group]), estimates["latent"]],
+      dim=-1,
+    )
+    if masks is not None:
+      actor_input = unpad_trajectories(actor_input, masks)
+    actor_output = self.mlp(actor_input)
+    output = actor_output
+    if self.distribution is not None:
+      if stochastic_output:
+        self.distribution.update(actor_output)
+        output = self.distribution.sample()
+      else:
+        output = self.distribution.deterministic_output(actor_output)
+    return output, self._auxiliary_losses_from_estimates(estimates, obs, masks)
+
+  def _auxiliary_losses_from_estimates(
+    self,
+    estimates: dict[str, torch.Tensor],
+    obs: TensorDict,
+    masks: torch.Tensor | None,
+  ) -> dict[str, torch.Tensor]:
+    successor_hat = self.successor_decoder(estimates["latent_sampled"])
     height_hat = self.height_decoder(estimates["map_latent"])
     mu = estimates["mu"]
     logvar = estimates["logvar"]
@@ -271,18 +321,12 @@ class PIEActorModel(nn.Module):
     update_internal: bool,
     sample_latent: bool,
   ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-    history_token = self.history_encoder(self.history_normalizer(history))
-    depth_tokens = self._encode_depth(depth)
-    leading_shape = history_token.shape[:-1]
-    tokens = torch.cat([history_token.unsqueeze(-2), depth_tokens], dim=-2)
-    token_count = tokens.shape[-2]
-    fused = self.cross_modal_transformer(
-      tokens.reshape(-1, token_count, self.token_dim)
-    )
-    fused = fused.reshape(*leading_shape, token_count, self.token_dim)
-    memory_input = torch.cat(
-      [fused[..., 0, :], fused[..., 1:, :].mean(dim=-2)], dim=-1
-    )
+    if self.gradient_checkpointing and torch.is_grad_enabled():
+      memory_input = torch.utils.checkpoint.checkpoint(
+        self._trunk, history, depth, use_reentrant=False
+      )
+    else:
+      memory_input = self._trunk(history, depth)
 
     if masks is not None:
       if hidden_state is None:
@@ -304,19 +348,38 @@ class PIEActorModel(nn.Module):
     foot_clearance = self.foot_clearance_head(memory_output)
     mu = self.vae_mu_head(memory_output)
     logvar = self.vae_logvar_head(memory_output).clamp(-10.0, 5.0)
-    if sample_latent:
-      z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
-    else:
-      z = mu
-    latent = torch.cat([velocity, map_latent, foot_clearance, z], dim=-1)
-    return {
+    estimates = {
       "velocity": velocity,
       "map_latent": map_latent,
       "foot_clearance": foot_clearance,
       "mu": mu,
       "logvar": logvar,
-      "latent": latent,
-    }, new_hidden
+      "latent": torch.cat([velocity, map_latent, foot_clearance, mu], dim=-1),
+    }
+    if sample_latent:
+      z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
+      estimates["latent_sampled"] = torch.cat(
+        [velocity, map_latent, foot_clearance, z], dim=-1
+      )
+    return estimates, new_hidden
+
+  def _trunk(
+    self,
+    history: torch.Tensor,
+    depth: torch.Tensor,
+  ) -> torch.Tensor:
+    history_token = self.history_encoder(self.history_normalizer(history))
+    depth_tokens = self._encode_depth(depth)
+    leading_shape = history_token.shape[:-1]
+    tokens = torch.cat([history_token.unsqueeze(-2), depth_tokens], dim=-2)
+    token_count = tokens.shape[-2]
+    fused = self.cross_modal_transformer(
+      tokens.reshape(-1, token_count, self.token_dim)
+    )
+    fused = fused.reshape(*leading_shape, token_count, self.token_dim)
+    return torch.cat(
+      [fused[..., 0, :], fused[..., 1:, :].mean(dim=-2)], dim=-1
+    )
 
   def _make_depth_encoder(self, cfg: dict[str, Any]) -> nn.Sequential:
     channels = [int(v) for v in cfg.get("output_channels", (32, 64, 64))]
