@@ -37,11 +37,11 @@ from src.tasks.pie.mdp.route_command import RouteVelocityCommand
 @dataclass(frozen=True)
 class PlayPIEConfig:
     checkpoint_file: str
-    task: Literal["Unitree-Go2-PIE-Parkour", "Unitree-Go2-PIE"] = "Unitree-Go2-PIE-Parkour"
+    task: Literal["Unitree-Go2-PIE-Parkour", "Unitree-Go2-PIE-Parkour-AMP", "Unitree-Go2-PIE"] = "Unitree-Go2-PIE-Parkour"
     terrain: Literal["all", "flat", "hurdle", "step", "gap", "platform", "stairs_up", "stairs_down", "slope_up", "slope_down"] = "all"
     terrain_level: int = 0
     """Fixed difficulty from 0 (easy) to 9 (hard)."""
-    num_envs: int = 1
+    num_envs: int = 24
     seed: int = 42
     device: str = "cuda:0"
     viewer: Literal["auto", "native", "viser"] = "auto"
@@ -102,6 +102,13 @@ def run_play_pie(cfg: PlayPIEConfig) -> dict:
     configure_torch_backends()
     env_cfg = load_env_cfg(cfg.task, play=True)
     agent_cfg = load_rl_cfg(cfg.task)
+    if cfg.task == "Unitree-Go2-PIE-Parkour-AMP":
+        from src.tasks.pie.config.go2.rl_cfg import unitree_go2_pie_ppo_runner_cfg
+
+        # Inference needs the PIE actor only, never expert data/discriminator/replay.
+        agent_cfg.algorithm = unitree_go2_pie_ppo_runner_cfg().algorithm
+        agent_cfg.obs_groups.pop("amp", None)
+        agent_cfg.num_steps_per_env = 1
     env_cfg.seed = cfg.seed
     env_cfg.scene.num_envs = cfg.num_envs
     env_cfg.episode_length_s = cfg.episode_length_s
@@ -123,7 +130,7 @@ def run_play_pie(cfg: PlayPIEConfig) -> dict:
         "select_terrain": EventTermCfg(func=env_mdp.randomize_terrain, mode="reset"),
         **env_cfg.events,
     }
-    is_parkour = cfg.task == "Unitree-Go2-PIE-Parkour"
+    is_parkour = cfg.task in ("Unitree-Go2-PIE-Parkour", "Unitree-Go2-PIE-Parkour-AMP")
     if cfg.speed is not None and not is_parkour:
         raise ValueError("--speed requires the parkour route task; use --command for legacy PIE.")
     direct_control = cfg.keyboard or cfg.command is not None

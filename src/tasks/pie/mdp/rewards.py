@@ -114,7 +114,11 @@ def joint_power_l1(
 ) -> torch.Tensor:
   """Mechanical power penalty used by the original PIE reward."""
   asset: Entity = env.scene[asset_cfg.name]
-  torque = asset.data.actuator_force[:, asset_cfg.actuator_ids]
+  # Actuators are grouped by joint type, whereas qvel is ordered by leg.
+  # Use generalized actuator torques at the same joint DoFs as the velocities;
+  # multiplying actuator_force directly by joint_vel pairs different joints.
+  torque = asset.data.data.qfrc_actuator[:, asset.data.indexing.joint_v_adr]
+  torque = torque[:, asset_cfg.joint_ids]
   velocity = asset.data.joint_vel[:, asset_cfg.joint_ids]
   return torch.sum(torch.abs(torque) * torch.abs(velocity), dim=1)
 

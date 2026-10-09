@@ -68,6 +68,7 @@ class PIEPPO(PPO):
     mean_surrogate_loss = 0.0
     mean_entropy = 0.0
     mean_auxiliary = {name: 0.0 for name in self.auxiliary_coefficients}
+    mean_extra_metrics: dict[str, float] = {}
     mean_rnd_loss = 0.0 if self.rnd else None
 
     if self.actor.is_recurrent or self.critic.is_recurrent:
@@ -79,7 +80,8 @@ class PIEPPO(PPO):
         self.num_mini_batches, self.num_learning_epochs
       )
 
-    for batch in generator:
+    auxiliary_batch_size = self.storage.num_envs * self.storage.num_transitions_per_env // self.num_mini_batches
+    for batch_index, batch in enumerate(generator):
       assert batch.observations is not None
       assert batch.actions is not None
       assert batch.advantages is not None
@@ -177,6 +179,8 @@ class PIEPPO(PPO):
         target_embedding = self.rnd.target(rnd_state).detach()
         rnd_loss = nn.functional.mse_loss(predicted_embedding, target_embedding)
 
+      extra_loss, extra_metrics = self._compute_auxiliary_loss(auxiliary_batch_size, batch_index)
+      loss = loss + extra_loss
       self.optimizer.zero_grad()
       loss.backward()
       if self.rnd:
@@ -191,6 +195,7 @@ class PIEPPO(PPO):
       self.optimizer.step()
       if self.rnd_optimizer:
         self.rnd_optimizer.step()
+      self._after_auxiliary_update()
 
       mean_value_loss += value_loss.item()
       mean_surrogate_loss += surrogate_loss.item()
@@ -199,6 +204,8 @@ class PIEPPO(PPO):
         mean_auxiliary[name] += value.item()
       if mean_rnd_loss is not None:
         mean_rnd_loss += rnd_loss.item()
+      for key, value in extra_metrics.items():
+        mean_extra_metrics[key] = mean_extra_metrics.get(key, 0.0) + value.detach().item()
 
     num_updates = self.num_learning_epochs * self.num_mini_batches
     mean_value_loss /= num_updates
@@ -219,4 +226,12 @@ class PIEPPO(PPO):
     }
     if mean_rnd_loss is not None:
       loss_dict["rnd"] = mean_rnd_loss
+    loss_dict.update({key: value / num_updates for key, value in mean_extra_metrics.items()})
     return loss_dict
+
+  def _compute_auxiliary_loss(self, batch_size: int, batch_index: int):
+    """Optional training-only objective; ordinary PIE has no extra loss."""
+    return torch.zeros((), device=self.device), {}
+
+  def _after_auxiliary_update(self) -> None:
+    """Optional state update after optimization (e.g. AMP normalization)."""

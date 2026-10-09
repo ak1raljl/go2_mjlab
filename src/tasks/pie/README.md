@@ -90,6 +90,13 @@ obstacles. Fixed gait-phase and standing-height rewards are removed to allow
 jumping. Training results must establish whether the harder obstacles are
 actually traversable by the learned policy.
 
+Parkour's `fell_over` requires a tilt greater than 80 degrees together with
+foot or non-foot terrain contact for 0.5 continuous seconds. Airborne rotation
+does not trigger this term; takeoff, recovery below the angle threshold, and
+episode reset clear its timer. This allows near-vertical takeoff and landing
+transients. Route-boundary and goal-relative fall-height checks still apply.
+Configure the angle and duration in `config/go2/parkour_env_cfg.py`.
+
 ```bash
 python scripts/train.py Unitree-Go2-PIE-Parkour --gpu-ids '[0]' \
   --env.scene.num-envs 128 --agent.run-name pie_parkour
@@ -102,6 +109,60 @@ types (flat, hurdle, step, gap, platform, stairs_up/down and slope_up/down).
 Each mean includes all environments assigned to that type, after the curriculum
 update, not just the environments resetting on that step. Types with no assigned
 environments are omitted instead of reporting a misleading zero.
+
+### PIE Parkour with AMP
+
+`Unitree-Go2-PIE-Parkour-AMP` adds the AMP Rough discriminator to the same
+PIE visual policy and Parkour task. Train from scratch with 2048 environments:
+
+```bash
+python scripts/train.py Unitree-Go2-PIE-Parkour-AMP --gpu-ids '[0]' \
+  --env.scene.num-envs 2048 --agent.run-name pie_amp
+```
+
+Logs/checkpoints are written to `logs/rsl_rl/go2_pie_parkour_amp/`. Replay:
+
+```bash
+python scripts/play_pie.py --task Unitree-Go2-PIE-Parkour-AMP \
+  --checkpoint-file logs/rsl_rl/go2_pie_parkour_amp/<run>/model_<iteration>.pt \
+  --num-envs 1 --depth
+```
+
+Playback loads only the policy: no expert motion files, discriminator, or AMP
+replay buffer are needed. AMP checkpoints retain the discriminator,
+normalization statistics and optimizer for training resume. Resume a run with
+`--agent.resume True --agent.load-run <run> --agent.load-checkpoint model_<iteration>.pt`.
+
+The reference data are the 17 non-jump clips in `src/assets/motions/go2`.
+The discriminator sees two consecutive 195-dimensional body states and uses
+a 390→1024→512→1 network with least-squares loss and gradient penalty.
+Expert transitions are sampled on demand; the policy replay holds 100,000
+transitions (about 149 MiB). The PIE estimator losses remain active, using
+the existing shared visual forward pass. Terminal AMP states are captured
+before reset, including the original terrain's reward weight.
+
+The reward is `task_reward + terrain_weight * style_score`, where
+`style_score = max(0, 1 - 0.25 * (D - 1)^2)` lies in [0, 1]. Task reward is
+not rescaled, and there is no jump-phase gating or additional gait penalty.
+Weights are per control step (default 0.02 s):
+
+| Terrain | AMP weight |
+| --- | ---: |
+| flat | 0.04 |
+| slope_up / slope_down | 0.02 |
+| stairs_up / stairs_down / step | 0.01 |
+| gap / hurdle / platform | 0.004 |
+
+Edit `PIEParkourAMPEnvCfg.amp_terrain_weights` in `amp_env.py` to tune them.
+Discriminator and replay settings live in `config/go2/amp_rl_cfg.py`.
+Logs include `Rewards/task`, `Rewards/amp` (unweighted score),
+`Rewards/weighted_amp`, `Rewards/total`, and
+`Rewards/terrain/<terrain>/{task,amp,weighted_amp}`. Episode diagnostics include
+`AMP/episode_contact_rate/{FL,FR,RL,RR}`,
+`AMP/episode_max_air_time_s/{FL,FR,RL,RR}` (mean of per-episode maxima), and
+`Metrics/route_success/<terrain>`, alongside the existing terrain-level logs.
+Assess foot participation together with obstacle success; a higher total
+reward alone does not establish a better gait.
 
 The original PIE task
 remains available. Existing PIE checkpoints load because the policy contract

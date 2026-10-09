@@ -7,6 +7,9 @@ from src.tasks.pie.rl import PIEOnPolicyRunner
 from .env_cfgs import unitree_go2_pie_env_cfg
 from .rl_cfg import unitree_go2_pie_ppo_runner_cfg
 from .parkour_env_cfg import unitree_go2_pie_parkour_env_cfg
+from .amp_env_cfg import unitree_go2_pie_parkour_amp_env_cfg
+from .amp_rl_cfg import unitree_go2_pie_parkour_amp_runner_cfg
+from src.tasks.pie.rl.amp_runner import PIEAMPOnPolicyRunner
 
 
 register_mjlab_task(
@@ -30,4 +33,13 @@ register_mjlab_task(
   play_env_cfg=unitree_go2_pie_parkour_env_cfg(play=True),
   rl_cfg=_parkour_runner_cfg(),
   runner_cls=PIEOnPolicyRunner,
+)
+
+
+register_mjlab_task(
+  task_id="Unitree-Go2-PIE-Parkour-AMP",
+  env_cfg=unitree_go2_pie_parkour_amp_env_cfg(),
+  play_env_cfg=unitree_go2_pie_parkour_amp_env_cfg(play=True),
+  rl_cfg=unitree_go2_pie_parkour_amp_runner_cfg(),
+  runner_cls=PIEAMPOnPolicyRunner,
 )

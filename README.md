@@ -109,4 +109,18 @@ python scripts/play.py Unitree-Go2-AMP-Rough --checkpoint-file logs/rsl_rl/go2_a
 
 python scripts/play_pie.py --checkpoint-file logs/rsl_rl/go2_pie/2026-10-07_11-16-08_pie/model_2000.pt  --depth
 
+默认随机选择地形、难度为 **level 0**，每次 reset 采样速度并保持到本回合结束，已关闭 push 等干扰。
+
+可在命令后追加：
+
+- `--terrain gap --terrain-level 5`：查看 level 5 的 gap 地形，难度范围 `0–9`。
+- `--speed 0.8`：固定期望速度为 `0.8 m/s`。
+- `--keyboard`：使用键盘控制，不能与 `--speed` 同时使用。
+
+`--depth` 显示原始深度和训练预处理后的输入深度，不需要时去掉即可。
+
+
+python scripts/play_pie.py --checkpoint-file logs/rsl_rl/go2_pie_parkour/2026-10-08_17-05-22_pie/model_5000.pt  --depth  --terrain-level 6
+
+scp -r ljl@192.168.1.122:/DATA/rl_ws/go2_mjlab/logs/rsl_rl/go2_pie_parkour logs/rsl_rl/
 ```
