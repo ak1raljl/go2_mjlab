@@ -120,11 +120,12 @@ class ParkourTerrainCfg(SubTerrainCfg):
       intervals = _place_obstacles(np.full(6, gap_width), 3.0, length - 2.0,
                                    self.obstacle_min_spacing, rng)
       for i, (gap_start, gap_end) in enumerate(intervals):
-        box(left, gap_start, 0, width, 0)
+        # Solid banks meet the pit floor; no exposed slab underside can hook a leg.
+        box(left, gap_start, 0, width, 0, bottom=-pit_depth)
         left = gap_end
         # Land-side waypoints, with enough support for the robot footprint.
         goals[i + 1, 0] = left + 0.55
-      box(left, length, 0, width, 0)
+      box(left, length, 0, width, 0, bottom=-pit_depth)
     elif self.kind == "step":
       start, end = rng.uniform(2.5, 3.5), length - rng.uniform(2.5, 3.5)
       lengths = 1.0 + (end - start - 6.0) * rng.dirichlet(np.ones(6) * 2)

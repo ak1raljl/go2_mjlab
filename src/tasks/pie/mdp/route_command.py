@@ -28,6 +28,7 @@ class RouteVelocityCommand(UniformVelocityCommand):
     self._last_route_step = torch.full_like(self.goal_index, -1)
     self._rows = torch.arange(self.num_envs, device=self.device)
     self.is_flat = torch.zeros_like(self.completed)
+    self.is_gap = torch.zeros_like(self.completed)
     self.metrics["route_completion"] = torch.zeros(self.num_envs, device=self.device)
 
   @property
@@ -53,6 +54,7 @@ class RouteVelocityCommand(UniformVelocityCommand):
     column = terrain.terrain_types[env_ids] / generator.num_cols + 0.001
     ids = (column[:, None] >= cutoffs).sum(1).clamp(max=len(names) - 1)
     self.is_flat[env_ids] = ids == names.index("flat") if "flat" in names else False
+    self.is_gap[env_ids] = ids == names.index("gap") if "gap" in names else False
     return super().reset(env_ids)
 
   def refresh_route(self):

@@ -73,6 +73,9 @@ Hurdle, step, gap, platform and both stair types have no added roughness,
 including their ground sections, obstacle tops and gap bottoms. Spawn/goal
 heights follow the actual surface. These are adaptations, not identical Isaac Gym terrains.
 Hurdle/platform heights also have per-obstacle variation.
+Gap banks extend continuously from the surface to the pit floor; there is no
+open cavity beneath the ground for a leg to enter. Gap widths, randomized
+spacing and route waypoints are independent of this bank depth.
 
 Roughness amplitude is sampled once per tile: **0.04–0.10 m for flat**, and
 **0.02–0.06 m for slopes**, and **zero for all other terrain types**.
@@ -90,12 +93,19 @@ obstacles. Fixed gait-phase and standing-height rewards are removed to allow
 jumping. Training results must establish whether the harder obstacles are
 actually traversable by the learned policy.
 
-Parkour's `fell_over` requires a tilt greater than 80 degrees together with
+Parkour's `fell_over` requires a tilt greater than 85 degrees together with
 foot or non-foot terrain contact for 0.5 continuous seconds. Airborne rotation
 does not trigger this term; takeoff, recovery below the angle threshold, and
 episode reset clear its timer. This allows near-vertical takeoff and landing
 transients. Route-boundary and goal-relative fall-height checks still apply.
 Configure the angle and duration in `config/go2/parkour_env_cfg.py`.
+For both Parkour and Parkour-AMP, `gap_fall_height` terminates a gap episode
+when the robot root is more than **0.20 m below the current waypoint's Z**.
+This term only applies to gap tiles; set its `max_drop` parameter in the same
+configuration file. `base_contact` terminates on `base_link` contact with
+terrain, including brief contacts within the last control step. It uses the
+dedicated torso sensor, so leg-only contacts do not trigger this term. Both
+are failure terminations and also apply in `play_pie.py`.
 
 ```bash
 python scripts/train.py Unitree-Go2-PIE-Parkour --gpu-ids '[0]' \

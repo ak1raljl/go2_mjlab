@@ -44,7 +44,8 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
     name="torso_ground_contact",
     primary=ContactMatch(mode="body", pattern="base_link", entity="robot"),
     secondary=ContactMatch(mode="body", pattern="terrain"),
-    fields=("found", "force"), reduce="netforce", num_slots=1, history_length=2,
+    fields=("found", "force"), reduce="netforce", num_slots=1,
+    history_length=cfg.decimation,
   )
   cfg.scene.sensors = (*cfg.scene.sensors, torso_contact)
   cfg.terminations["fell_over"] = TerminationTermCfg(
@@ -55,14 +56,17 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
       "sensor_names": ("feet_ground_contact", "nonfoot_ground_touch"),
     },
   )
-  # cfg.terminations["illegal_contact"] = TerminationTermCfg(
-  #   func=mdp.illegal_contact,
-  #   params={"sensor_name": "torso_ground_contact", "force_threshold": 10.0},
-  # )
+  cfg.terminations["base_contact"] = TerminationTermCfg(
+    func=mdp.body_terrain_contact,
+    params={"sensor_name": "torso_ground_contact"},
+  )
   cfg.terminations["route_complete"] = TerminationTermCfg(
     func=parkour.route_complete, time_out=True,
   )
   cfg.terminations["route_failed"] = TerminationTermCfg(func=parkour.route_failed)
+  cfg.terminations["gap_fall_height"] = TerminationTermCfg(
+    func=parkour.gap_fall_height, params={"max_drop": 0.20},
+  )
   cfg.curriculum = {} if play else {
     "terrain_levels": CurriculumTermCfg(func=parkour.route_curriculum),
     # Log after the single curriculum update; these terms only read levels.

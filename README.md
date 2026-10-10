@@ -122,5 +122,5 @@ python scripts/play_pie.py --checkpoint-file logs/rsl_rl/go2_pie/2026-10-07_11-1
 
 python scripts/play_pie.py --checkpoint-file logs/rsl_rl/go2_pie_parkour/2026-10-08_17-05-22_pie/model_5000.pt  --depth  --terrain-level 6
 
-scp -r ljl@192.168.1.122:/DATA/rl_ws/go2_mjlab/logs/rsl_rl/go2_pie_parkour logs/rsl_rl/
+scp -r ljl@192.168.1.122:/DATA/rl_ws/go2_mjlab/logs/rsl_rl/go2_pie_parkour_amp logs/rsl_rl/
 ```

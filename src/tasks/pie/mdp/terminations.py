@@ -48,6 +48,16 @@ class grounded_bad_orientation:
     return self._steps >= math.ceil(duration_s / env.step_dt)
 
 
+def body_terrain_contact(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
+  """Detect current body contact or any contact force during the control step."""
+  data = env.scene[sensor_name].data
+  assert data.found is not None
+  contact = (data.found > 0).reshape(env.num_envs, -1).any(dim=-1)
+  if data.force_history is not None:
+    contact |= (data.force_history != 0).reshape(env.num_envs, -1).any(dim=-1)
+  return contact
+
+
 def illegal_contact(
   env: ManagerBasedRlEnv,
   sensor_name: str,

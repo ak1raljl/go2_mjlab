@@ -1,5 +1,7 @@
 """Rewards, episode boundaries and curriculum for externally guided PIE."""
 
+import math
+
 import torch
 
 from .rewards import track_body_planar_velocity
@@ -29,6 +31,15 @@ def route_failed(env):
   # Goal-relative support height handles ascending and descending routes.
   fallen = pos[:, 2] < route.current_goal[:, 2] - 0.8
   return outside | fallen
+
+
+def gap_fall_height(env, max_drop: float = 0.20):
+  """Terminate gap falls below the current waypoint's support elevation."""
+  if not math.isfinite(max_drop) or max_drop <= 0:
+    raise ValueError("max_drop must be finite and positive.")
+  route = route_term(env)
+  root_z = route.robot.data.root_link_pos_w[:, 2]
+  return route.is_gap & (root_z < route.current_goal[:, 2] - max_drop)
 
 
 def route_velocity_reward(env):
