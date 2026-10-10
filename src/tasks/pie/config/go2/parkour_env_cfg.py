@@ -2,7 +2,7 @@
 
 import copy
 import math
-from dataclasses import fields
+from dataclasses import fields, replace
 
 from mjlab.managers import CurriculumTermCfg, RewardTermCfg, TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
@@ -15,9 +15,42 @@ from src.tasks.pie.parkour_terrains import PIE_PARKOUR_TERRAINS_CFG
 from .env_cfgs import unitree_go2_pie_env_cfg
 
 
+_PARKOUR_CAMERA_POSITION = (0.34, 0.0, 0.07)
+_PARKOUR_CAMERA_PITCH_DEG = 30.0
+_PARKOUR_CAMERA_FOVY_DEG = 67.0
+_PARKOUR_CAMERA_RESOLUTION = 120
+
+
 def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
   base = unitree_go2_pie_env_cfg(play=play)
   cfg = PIEParkourEnvCfg(**{f.name: getattr(base, f.name) for f in fields(base) if f.init})
+  # Match MGDP's runtime Go2 camera, not its URDF visual camera joint.
+  # Square pixels/images make its 67-degree horizontal FOV also the vertical
+  # FOV. MuJoCo camera -Z looks forward/down; +Y stays image-up.
+  half_angle = math.radians(90.0 - _PARKOUR_CAMERA_PITCH_DEG) / 2.0
+  c, s = math.cos(half_angle) / math.sqrt(2.0), math.sin(half_angle) / math.sqrt(2.0)
+  cfg.scene.sensors = tuple(
+    replace(
+      sensor, pos=_PARKOUR_CAMERA_POSITION, quat=(c, s, -s, -c),
+      fovy=_PARKOUR_CAMERA_FOVY_DEG,
+      width=_PARKOUR_CAMERA_RESOLUTION, height=_PARKOUR_CAMERA_RESOLUTION,
+    )
+    if sensor.name == "front_depth" else sensor
+    for sensor in cfg.scene.sensors
+  )
+  # Keep the complete MGDP frustum and resize to PIE's existing encoder input.
+  cfg.observations["camera"].terms["front_depth"].params.update(
+    crop_left=0, crop_right=0, resize=(60, 86),
+  )
+  if "camera_position" in cfg.events:
+    cfg.events["camera_position"].params["ranges"] = {
+      axis: (-0.02, 0.02) for axis in range(3)
+    }
+  if "camera_pitch" in cfg.events:
+    cfg.events["camera_pitch"].params["pitch_range"] = (
+      -math.radians(2.0), math.radians(2.0),
+    )
+  cfg.events.pop("camera_fovy", None)
   cfg.scene.terrain.terrain_generator = copy.deepcopy(PIE_PARKOUR_TERRAINS_CFG)
   cfg.scene.terrain.max_init_terrain_level = 1
   cfg.episode_length_s = 40.0
@@ -56,10 +89,8 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
       "sensor_names": ("feet_ground_contact", "nonfoot_ground_touch"),
     },
   )
-  cfg.terminations["base_contact"] = TerminationTermCfg(
-    func=mdp.body_terrain_contact,
-    params={"sensor_name": "torso_ground_contact"},
-  )
+  # The inherited collision reward already penalizes base collision geoms.
+  # Allow recovery after torso contact without a separate contact termination.
   cfg.terminations["route_complete"] = TerminationTermCfg(
     func=parkour.route_complete, time_out=True,
   )

@@ -258,6 +258,8 @@ class KeyboardCommandEnv:
         assert raw is not None
         height = raw.shape[1]
         width = raw.shape[2] - params.get("crop_left", 0) - params.get("crop_right", 0)
+        if params.get("resize") is not None:
+            height, width = params["resize"]
         # Read the cached observation passed to the policy. Reprocessing the
         # latest sensor frame here would incorrectly bypass the 10 Hz history.
         history = observations["camera"][0].reshape(

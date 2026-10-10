@@ -25,8 +25,9 @@ def camera_depth(
   crop_left: int = 0,
   crop_right: int = 0,
   gaussian_blur: tuple[int, float] | None = None,
+  resize: tuple[int, int] | None = None,
 ) -> torch.Tensor:
-  """Return cropped, normalized depth in ``(B, 1, H, W)`` layout."""
+  """Return cropped/resized, normalized depth in ``(B, 1, H, W)`` layout."""
   sensor: CameraSensor = env.scene[sensor_name]
   depth = sensor.data.depth
   assert depth is not None, f"Camera '{sensor_name}' has no depth output."
@@ -50,6 +51,10 @@ def camera_depth(
     torch.full_like(depth, cutoff_distance),
     depth,
   )
+  if resize is not None:
+    if len(resize) != 2 or any(size <= 0 for size in resize):
+      raise ValueError("Depth resize must contain positive height and width.")
+    depth = F.interpolate(depth, size=resize, mode="bilinear", align_corners=False)
   if gaussian_blur is not None:
     kernel_size, sigma = gaussian_blur
     if kernel_size <= 0 or kernel_size % 2 == 0 or sigma <= 0.0:
@@ -101,6 +106,7 @@ class DepthHistory(ManagerTermBase):
     crop_left: int = 0,
     crop_right: int = 0,
     gaussian_blur: tuple[int, float] | None = None,
+    resize: tuple[int, int] | None = None,
     frame_history_length: int = 2,
     update_period_steps: int = 5,
   ) -> torch.Tensor:
@@ -124,6 +130,7 @@ class DepthHistory(ManagerTermBase):
         crop_left=crop_left,
         crop_right=crop_right,
         gaussian_blur=gaussian_blur,
+        resize=resize,
       )
 
       if self._history is None:

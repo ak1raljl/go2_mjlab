@@ -42,7 +42,8 @@ Each 18 x 4 m tile supplies eight ordered support points. The training speed is 
 from 0.3–1.2 m/s every six seconds, with lateral commands limited to ±0.35 m/s
 and yaw rate to ±1.2 rad/s. A waypoint counts after reaching/crossing it with
 foot support at the corresponding height. Completing all points ends the
-episode; falling, torso collisions and leaving the tile terminate it. Training
+episode; falling and leaving the tile terminate it, while torso collisions
+incur the collision penalty. Training
 raises terrain difficulty after successful traversal and lowers it after
 failure or insufficient progress. Episodes last at most 40 seconds.
 
@@ -102,10 +103,11 @@ Configure the angle and duration in `config/go2/parkour_env_cfg.py`.
 For both Parkour and Parkour-AMP, `gap_fall_height` terminates a gap episode
 when the robot root is more than **0.20 m below the current waypoint's Z**.
 This term only applies to gap tiles; set its `max_drop` parameter in the same
-configuration file. `base_contact` terminates on `base_link` contact with
-terrain, including brief contacts within the last control step. It uses the
-dedicated torso sensor, so leg-only contacts do not trigger this term. Both
-are failure terminations and also apply in `play_pie.py`.
+configuration file. Base contact is penalized by the existing `collision`
+reward (weight **-10.0**, force threshold **0.1 N**) rather than causing a
+separate termination. This reward counts non-foot collision geometries,
+including the three base geometries; no extra base penalty is added.
+Gap-height and fall terminations still apply in training and `play_pie.py`.
 
 ```bash
 python scripts/train.py Unitree-Go2-PIE-Parkour --gpu-ids '[0]' \
@@ -302,18 +304,40 @@ complete 45-element vectors. `PIEEnv` derives current proprioception from
 the latest history samples, so noise agrees exactly between the two inputs.
 Reset backfills only the affected environments with their first sample.
 
-The camera renders 106 x 60 pixels, then crops ten columns from each side.
+The legacy PIE camera renders 106 x 60 pixels, then crops ten columns from
+each side. Parkour and Parkour-AMP render 120 x 120 pixels without cropping
+and resize the full image to 60 x 86 (bilinear, `align_corners=False`).
+Invalid depths are filled before resizing; Gaussian blur follows resizing.
 Nonpositive/nonfinite depths become 3 m, followed by a 3 x 3 Gaussian blur
 (sigma 1, reflect padding), clipping to [0.05, 3] m and division by 3.
 The model subtracts 0.5 internally; do not subtract it again in deployment.
 The underlying MuJoCo-Warp output is distance along the unit camera ray.
 An axial/Z-depth camera transport needs conversion to the same definition.
 
-The nominal camera is at (0.345, 0, 0.07) relative to `base_link`, pitched
-20 degrees down. Raw horizontal FOV is 87 degrees; the config converts
-this to vertical FOV before cropping. Depth history advances every five
-control steps and repeats the first frame after reset. Camera extrinsic/FOV
-randomization is included in training.
+The legacy camera is at (0.345, 0, 0.07) relative to `base_link`.
+`Unitree-Go2-PIE` uses a 20-degree downward pitch and 87-degree raw horizontal
+FOV, converted to vertical FOV before cropping. Parkour and Parkour-AMP
+follow MGDP's runtime Go2 camera in
+`thirdparty/MGDP/legged_gym/legged_gym/envs/random_dog/utils/sensor_config.py`:
+**(0.34, 0, 0.07) m**, **30-degree downward pitch**, **120 x 120 pixels**,
+and **67-degree horizontal/vertical FOV**. At a level root height of 0.32 m
+over flat ground, the lower frustum edge reaches about
+**0.53 m ahead of the root**, versus
+about 0.70 m with the legacy camera. Body pitch, height and occlusion change
+this range; ground behind the front-mounted camera is still outside its view.
+Parkour training uses MGDP's +/-0.02 m position randomization on each axis
+and +/-2-degree pitch randomization, with fixed FOV. Playback uses nominal
+parameters. Adjust these in `config/go2/parkour_env_cfg.py`.
+This changes the visual input distribution: train new policies
+with this camera configuration and use the same setup in playback/deployment.
+PIE retains its 2 x 60 x 86 history, ray-range depth, Gaussian blur and
+[0.05, 3] m normalization described above. MGDP instead uses axial/Z-depth,
+resizes to 16 x 16 and clips to [0.1, 2.5] m; those policy preprocessing
+choices are not adopted here. ONNX metadata records the raw resolution,
+resize, camera transform and preprocessing for deployment.
+Depth history advances every five
+control steps and repeats the first frame after reset. Legacy PIE also
+retains its original camera extrinsic/FOV randomization.
 
 Policy frequency is 50 Hz (0.005 s physics step, decimation 4). The policy
 produces twelve offsets with `q_target = q_default + 0.25 * actions`, in
