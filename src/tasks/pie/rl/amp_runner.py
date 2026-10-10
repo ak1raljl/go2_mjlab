@@ -10,6 +10,12 @@ from .runner import PIEOnPolicyRunner
 class PIEAMPOnPolicyRunner(PIEOnPolicyRunner):
   """Preserve the PIE training loop and deployment contract for AMP policies."""
 
+  _TENSORBOARD_ONLY_PREFIXES = (
+    "Rewards/terrain/",
+    "AMP/episode_contact_rate/",
+    "AMP/episode_max_air_time_s/",
+  )
+
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     # RSL-RL's loop logs the environment reward, before algorithm-side AMP
@@ -28,6 +34,25 @@ class PIEAMPOnPolicyRunner(PIEOnPolicyRunner):
         for key in entry:
           if key not in entries[0]:
             entries[0][key] = torch.empty(0, device=self.device)
+      if self.logger.writer is not None:
+        # The upstream logger writes and prints every extra together. Write
+        # verbose diagnostics here with the same sample-weighted aggregation,
+        # then pass only console-visible extras to the upstream logger.
+        iteration = args[0] if args else kwargs["it"]
+        quiet_keys = [
+          key for key in entries[0]
+          if key.startswith(self._TENSORBOARD_ONLY_PREFIXES)
+        ]
+        for key in quiet_keys:
+          samples = [
+            torch.as_tensor(entry[key], device=self.device).reshape(-1)
+            for entry in entries if key in entry
+          ]
+          value = torch.cat(samples).float().mean()
+          self.logger.writer.add_scalar(key, value, iteration)
+        for entry in entries:
+          for key in quiet_keys:
+            entry.pop(key, None)
     return self._base_log(*args, **kwargs)
 
   def _process_logging_env_step(
