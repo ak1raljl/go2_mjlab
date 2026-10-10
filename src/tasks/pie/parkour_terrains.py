@@ -62,7 +62,7 @@ class ParkourTerrainCfg(SubTerrainCfg):
   slope_angle_range: tuple[float, float] = (5.0, 25.0)
   """Slope inclination in degrees, interpolated by difficulty."""
   slope_length_range: tuple[float, float] = (4.0, 6.0)
-  # Reference Extreme Parkour roughness; stairs explicitly remain smooth.
+  # Roughness applies only to flat terrain and slopes.
   roughness_height_range: tuple[float, float] = (0.02, 0.06)
   roughness_horizontal_scale: float = 0.3
   roughness_downsampled_scale: float = 0.075
@@ -201,7 +201,7 @@ class ParkourTerrainCfg(SubTerrainCfg):
 
     if not np.all(np.diff(goals[:, 0]) > 0):
       raise ValueError("Route goals must advance strictly along the tile.")
-    if self.kind not in ("stairs_up", "stairs_down"):
+    if self.kind in ("flat", "slope_up", "slope_down"):
       geometries = roughen_box_surfaces(
         spec, geometries, origin, goals, self, rng, height_profile=height_profile,
       )
@@ -215,8 +215,9 @@ PIE_PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
     name: ParkourTerrainCfg(
       kind=name, proportion=weight,
       roughness_height_range=(
-        (0.0, 0.0) if name.startswith("stairs_")
-        else (0.04, 0.10) if name == "flat" else (0.02, 0.06)
+        (0.04, 0.10) if name == "flat"
+        else (0.02, 0.06) if name in ("slope_up", "slope_down")
+        else (0.0, 0.0)
       ),
     )
     for name, weight in {

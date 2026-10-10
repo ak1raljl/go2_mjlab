@@ -41,7 +41,7 @@ class PlayPIEConfig:
     terrain: Literal["all", "flat", "hurdle", "step", "gap", "platform", "stairs_up", "stairs_down", "slope_up", "slope_down"] = "all"
     terrain_level: int = 0
     """Fixed difficulty from 0 (easy) to 9 (hard)."""
-    num_envs: int = 24
+    num_envs: int = 1
     seed: int = 42
     device: str = "cuda:0"
     viewer: Literal["auto", "native", "viser"] = "auto"

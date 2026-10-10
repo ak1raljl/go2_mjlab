@@ -66,21 +66,21 @@ waypoint; shorter routes add ground waypoints to retain eight valid points.
 Stair and slope starting positions also vary. Geometry is sampled when the
 terrain map is generated, not regenerated on every environment reset.
 
-The obstacle layout is built from rectangular sections. Except for smooth
-stairs, sections are converted to solid MuJoCo heightfields with physical
-surface roughness, including obstacle tops and gap bottoms. Slopes use
-continuous height profiles with roughness added. Separate heightfields
-preserve vertical boundaries and gap widths. Spawn/goal heights follow the
-actual rough surface. These are adaptations, not identical Isaac Gym terrains.
+The obstacle layout is built from smooth rectangular sections. Only flat
+terrain and slopes use solid MuJoCo heightfields with physical surface
+roughness. Slopes use continuous height profiles with roughness added.
+Hurdle, step, gap, platform and both stair types have no added roughness,
+including their ground sections, obstacle tops and gap bottoms. Spawn/goal
+heights follow the actual surface. These are adaptations, not identical Isaac Gym terrains.
 Hurdle/platform heights also have per-obstacle variation.
 
 Roughness amplitude is sampled once per tile: **0.04–0.10 m for flat**, and
-**0.02–0.06 m for obstacles and slopes**, and **zero for both stair types**.
+**0.02–0.06 m for slopes**, and **zero for all other terrain types**.
 Heights vary on both sides of the nominal
 surface; these ranges describe amplitude, not peak-to-peak height. Quantized
 uniform noise uses 0.005 m vertical increments on a 0.075 m coarse grid and is
-interpolated onto a grid with at most 0.05 m spacing. Roughness is active at
-every difficulty, as in the reference's `add_roughness()` default. The parameters
+interpolated onto a grid with at most 0.3 m spacing. Roughness is active on flat
+terrain and slopes at every difficulty. The parameters
 live in `ParkourTerrainCfg` and the per-type overrides in `PIE_PARKOUR_TERRAINS_CFG`.
 Set `roughness_height_range=(0.0, 0.0)` to compare with smooth terrain.
 Training, playback and the gallery all use this same terrain generator.
