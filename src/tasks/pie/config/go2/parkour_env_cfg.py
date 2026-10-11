@@ -4,7 +4,7 @@ import copy
 import math
 from dataclasses import fields, replace
 
-from mjlab.managers import CurriculumTermCfg, RewardTermCfg, TerminationTermCfg
+from mjlab.managers import CurriculumTermCfg, RewardTermCfg, SceneEntityCfg, TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 
 from src.tasks.pie import mdp
@@ -99,8 +99,11 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
     func=parkour.gap_fall_height, params={"max_drop": 0.20},
   )
   cfg.terminations["stepping_stones_fall_height"] = TerminationTermCfg(
-    func=parkour.terrain_fall_height,
-    params={"terrain_name": "stepping_stones", "max_drop": 0.20},
+    func=parkour.stepping_stones_foot_fall_height,
+    params={
+      "foot_cfg": SceneEntityCfg("robot", site_names=("FL", "FR", "RL", "RR")),
+      "max_drop": 0.20,
+    },
   )
   cfg.curriculum = {} if play else {
     "terrain_levels": CurriculumTermCfg(func=parkour.route_curriculum),

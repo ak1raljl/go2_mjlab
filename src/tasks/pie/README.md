@@ -127,9 +127,11 @@ Configure the angle and duration in `config/go2/parkour_env_cfg.py`.
 For both Parkour and Parkour-AMP, `gap_fall_height` terminates a gap episode
 when the robot root is more than **0.20 m below the current waypoint's Z**.
 This term only applies to gap tiles; set its `max_drop` parameter in the same
-configuration file. `stepping_stones_fall_height` applies the same 0.20 m
-goal-relative drop threshold only to stepping-stone tiles, preventing pit-floor
-walking from completing the task. Base contact is penalized by the existing `collision`
+configuration file. `stepping_stones_fall_height` checks the four foot sites
+FL/FR/RL/RR instead of the robot root: any foot more than **0.20 m below the
+nominal support plane** terminates a stepping-stone episode. For the current
+Z=0 route this is `foot_z < -0.20 m`; it does not require all four feet to fall.
+Base contact is penalized by the existing `collision`
 reward (weight **-10.0**, force threshold **0.1 N**) rather than causing a
 separate termination. This reward counts non-foot collision geometries,
 including the three base geometries; no extra base penalty is added.

@@ -3,6 +3,7 @@
 import math
 
 import torch
+from mjlab.managers import SceneEntityCfg
 
 from .rewards import track_body_planar_velocity
 
@@ -49,6 +50,19 @@ def terrain_fall_height(env, terrain_name: str, max_drop: float = 0.20):
   return getattr(route, f"is_{terrain_name}") & (
     root_z < route.current_goal[:, 2] - max_drop
   )
+
+
+def stepping_stones_foot_fall_height(
+  env, foot_cfg: SceneEntityCfg, max_drop: float = 0.20,
+):
+  """Terminate when any foot falls below the stepping-stone support plane."""
+  if not math.isfinite(max_drop) or max_drop <= 0:
+    raise ValueError("max_drop must be finite and positive.")
+  route = route_term(env)
+  foot_z = env.scene[foot_cfg.name].data.site_pos_w[:, foot_cfg.site_ids, 2]
+  return route.is_stepping_stones & (
+    foot_z < route.current_goal[:, 2:3] - max_drop
+  ).any(dim=1)
 
 
 def route_velocity_reward(env):
