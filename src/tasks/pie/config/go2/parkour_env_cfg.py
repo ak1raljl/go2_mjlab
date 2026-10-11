@@ -65,7 +65,7 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
     ),
   )
   cfg.rewards["track_linear_velocity"] = RewardTermCfg(
-    func=parkour.route_velocity_reward, weight=1.5,
+    func=parkour.route_velocity_reward, weight=5.0,
   )
   cfg.rewards["route_goal"] = RewardTermCfg(func=parkour.route_goal_reward, weight=2.0)
   cfg.rewards["orientation"] = RewardTermCfg(func=parkour.parkour_orientation, weight=-1.0)
@@ -103,6 +103,8 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
     params={
       "foot_cfg": SceneEntityCfg("robot", site_names=("FL", "FR", "RL", "RR")),
       "max_drop": 0.20,
+      # Five control steps at 50 Hz = 0.1 s of continuous foot drop.
+      "consecutive_steps": 5,
     },
   )
   cfg.curriculum = {} if play else {

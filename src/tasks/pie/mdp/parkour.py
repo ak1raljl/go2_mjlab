@@ -3,7 +3,6 @@
 import math
 
 import torch
-from mjlab.managers import SceneEntityCfg
 
 from .rewards import track_body_planar_velocity
 
@@ -52,17 +51,41 @@ def terrain_fall_height(env, terrain_name: str, max_drop: float = 0.20):
   )
 
 
-def stepping_stones_foot_fall_height(
-  env, foot_cfg: SceneEntityCfg, max_drop: float = 0.20,
-):
-  """Terminate when any foot falls below the stepping-stone support plane."""
-  if not math.isfinite(max_drop) or max_drop <= 0:
-    raise ValueError("max_drop must be finite and positive.")
-  route = route_term(env)
-  foot_z = env.scene[foot_cfg.name].data.site_pos_w[:, foot_cfg.site_ids, 2]
-  return route.is_stepping_stones & (
-    foot_z < route.current_goal[:, 2:3] - max_drop
-  ).any(dim=1)
+class stepping_stones_foot_fall_height:
+  """Terminate when any foot stays below the stepping-stone support plane.
+
+  Counts consecutive control steps with a foot more than max_drop below the
+  current waypoint's support elevation; the episode ends only once the streak
+  reaches consecutive_steps, so a brief slip that recovers does not terminate.
+  """
+
+  def __init__(self, cfg, env):
+    if not math.isfinite(cfg.params["max_drop"]) or cfg.params["max_drop"] <= 0:
+      raise ValueError("max_drop must be finite and positive.")
+    if cfg.params["consecutive_steps"] < 1:
+      raise ValueError("consecutive_steps must be a positive integer.")
+    self._steps = torch.zeros(env.num_envs, device=env.device, dtype=torch.long)
+    self._last_step = torch.full_like(self._steps, -1)
+
+  def reset(self, env_ids=None):
+    if env_ids is None:
+      env_ids = slice(None)
+    self._steps[env_ids] = 0
+    self._last_step[env_ids] = -1
+
+  def __call__(self, env, foot_cfg, max_drop: float, consecutive_steps: int):
+    route = route_term(env)
+    foot_z = env.scene[foot_cfg.name].data.site_pos_w[:, foot_cfg.site_ids, 2]
+    fallen = route.is_stepping_stones & (
+      foot_z < route.current_goal[:, 2:3] - max_drop
+    ).any(dim=1)
+    # The manager may evaluate terms more than once per control step; count
+    # each control step only once, like grounded_bad_orientation.
+    fresh = self._last_step != env.common_step_counter
+    updated = torch.where(fallen, self._steps + 1, 0)
+    self._steps.copy_(torch.where(fresh, updated, self._steps))
+    self._last_step.fill_(env.common_step_counter)
+    return self._steps >= consecutive_steps
 
 
 def route_velocity_reward(env):

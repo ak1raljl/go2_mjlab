@@ -49,8 +49,8 @@ def _place_obstacles(widths, start, end, min_gap, rng):
 class ParkourTerrainCfg(SubTerrainCfg):
   kind: TerrainKind = "flat"
   lateral_range: float = 0.35
-  stone_diameter_range: tuple[float, float] = (0.24, 0.12)
-  """Nominal foot-sized cylinder diameter at difficulty zero and one."""
+  stone_size_range: tuple[float, float] = (0.30, 0.12)
+  """Nominal square pillar side length at difficulty zero and one."""
   stone_spacing_range: tuple[float, float] = (0.32, 0.38)
   """Nominal nearest-neighbour centre spacing of the staggered grid."""
   stone_position_jitter_range: tuple[float, float] = (0.01, 0.025)
@@ -111,18 +111,21 @@ class ParkourTerrainCfg(SubTerrainCfg):
       box(0, length, 0, width, 0)
 
     if self.kind == "stepping_stones":
-      diameter = height(self.stone_diameter_range)
+      size = height(self.stone_size_range)
       spacing = height(self.stone_spacing_range)
       jitter = height(self.stone_position_jitter_range)
       height_jitter = height(self.stone_height_jitter_range)
       field_length = rng.uniform(*self.stone_field_length_range)
       if (not all(np.isfinite(v) for v in (
-          diameter, spacing, jitter, height_jitter, field_length, self.stone_field_width,
-      )) or diameter <= 0 or jitter < 0 or height_jitter < 0
-          or spacing <= diameter * 1.1 + 2 * np.sqrt(2) * jitter
+          size, spacing, jitter, height_jitter, field_length, self.stone_field_width,
+      )) or size <= 0 or jitter < 0 or height_jitter < 0
+          # Pillars may touch or slightly overlap at easy levels; that only
+          # merges static geoms. Jitter must not reorder the grid itself.
+          or spacing <= 2 * np.sqrt(2) * jitter
+          or size >= 2 * spacing
           or not 2 * spacing < self.stone_field_width <= width
           or not 2 * spacing < field_length <= length - 6.0):
-        raise ValueError("Invalid stone grid dimensions or insufficient inter-stone clearance.")
+        raise ValueError("Invalid stone grid dimensions.")
       start = rng.uniform(3.0, length - 3.0 - field_length)
       end = start + field_length
       pit_depth = rng.uniform(0.6, 0.8)
@@ -138,20 +141,20 @@ class ParkourTerrainCfg(SubTerrainCfg):
       xs = np.linspace(start + spacing / 2, end - spacing / 2, rows)
       phase = rng.uniform(-spacing / 2, spacing / 2)
       half_width = self.stone_field_width / 2
-      margin = diameter * 1.1 / 2 + jitter
+      margin = size * 1.1 / 2 + jitter
       for row, x in enumerate(xs):
         ys = np.arange(-half_width - spacing, half_width + spacing, spacing)
         ys += phase + (row % 2) * spacing / 2
         ys = ys[np.abs(ys) <= half_width - margin] + mid
         for y in ys:
-          radius = diameter / 2 * rng.uniform(0.9, 1.1)
+          half_size = size / 2 * rng.uniform(0.9, 1.1)
           xy = np.array([x, y]) + rng.uniform(-jitter, jitter, 2)
           top = rng.uniform(-height_jitter, height_jitter)
-          # Solid cylinders meet the pit floor, avoiding exposed undersides.
+          # Solid square pillars meet the pit floor, avoiding exposed undersides.
           geom = body.add_geom(
-            type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+            type=mujoco.mjtGeom.mjGEOM_BOX,
             pos=(xy[0], xy[1], (top - pit_depth) / 2),
-            size=(radius, (top + pit_depth) / 2, 0.0),
+            size=(half_size, half_size, (top + pit_depth) / 2),
             rgba=(0.45, 0.50, 0.55, 1.0),
           )
           geometries.append(TerrainGeometry(geom=geom))
