@@ -98,6 +98,10 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
   cfg.terminations["gap_fall_height"] = TerminationTermCfg(
     func=parkour.gap_fall_height, params={"max_drop": 0.20},
   )
+  cfg.terminations["stepping_stones_fall_height"] = TerminationTermCfg(
+    func=parkour.terrain_fall_height,
+    params={"terrain_name": "stepping_stones", "max_drop": 0.20},
+  )
   cfg.curriculum = {} if play else {
     "terrain_levels": CurriculumTermCfg(func=parkour.route_curriculum),
     # Log after the single curriculum update; these terms only read levels.

@@ -38,7 +38,7 @@ from src.tasks.pie.mdp.route_command import RouteVelocityCommand
 class PlayPIEConfig:
     checkpoint_file: str
     task: Literal["Unitree-Go2-PIE-Parkour", "Unitree-Go2-PIE-Parkour-AMP", "Unitree-Go2-PIE"] = "Unitree-Go2-PIE-Parkour"
-    terrain: Literal["all", "flat", "hurdle", "step", "gap", "platform", "stairs_up", "stairs_down", "slope_up", "slope_down"] = "all"
+    terrain: Literal["all", "flat", "stepping_stones", "step", "gap", "platform", "stairs_up", "stairs_down", "slope_up", "slope_down"] = "all"
     terrain_level: int = 0
     """Fixed difficulty from 0 (easy) to 9 (hard)."""
     num_envs: int = 1

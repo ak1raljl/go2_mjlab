@@ -35,11 +35,20 @@ def route_failed(env):
 
 def gap_fall_height(env, max_drop: float = 0.20):
   """Terminate gap falls below the current waypoint's support elevation."""
+  return terrain_fall_height(env, terrain_name="gap", max_drop=max_drop)
+
+
+def terrain_fall_height(env, terrain_name: str, max_drop: float = 0.20):
+  """Terminate falls into a pit relative to the current support waypoint."""
   if not math.isfinite(max_drop) or max_drop <= 0:
     raise ValueError("max_drop must be finite and positive.")
+  if terrain_name not in ("gap", "stepping_stones"):
+    raise ValueError(f"No pit-height termination for terrain {terrain_name!r}.")
   route = route_term(env)
   root_z = route.robot.data.root_link_pos_w[:, 2]
-  return route.is_gap & (root_z < route.current_goal[:, 2] - max_drop)
+  return getattr(route, f"is_{terrain_name}") & (
+    root_z < route.current_goal[:, 2] - max_drop
+  )
 
 
 def route_velocity_reward(env):

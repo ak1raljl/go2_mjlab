@@ -20,7 +20,7 @@ class PIEParkourAMPEnvCfg(PIEParkourEnvCfg):
     "flat": 0.04,
     "slope_up": 0.02, "slope_down": 0.02,
     "stairs_up": 0.01, "stairs_down": 0.01, "step": 0.01,
-    "gap": 0.004, "hurdle": 0.004, "platform": 0.004,
+    "gap": 0.004, "stepping_stones": 0.004, "platform": 0.004,
   })
 
   @property

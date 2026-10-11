@@ -29,6 +29,7 @@ class RouteVelocityCommand(UniformVelocityCommand):
     self._rows = torch.arange(self.num_envs, device=self.device)
     self.is_flat = torch.zeros_like(self.completed)
     self.is_gap = torch.zeros_like(self.completed)
+    self.is_stepping_stones = torch.zeros_like(self.completed)
     self.metrics["route_completion"] = torch.zeros(self.num_envs, device=self.device)
 
   @property
@@ -55,6 +56,9 @@ class RouteVelocityCommand(UniformVelocityCommand):
     ids = (column[:, None] >= cutoffs).sum(1).clamp(max=len(names) - 1)
     self.is_flat[env_ids] = ids == names.index("flat") if "flat" in names else False
     self.is_gap[env_ids] = ids == names.index("gap") if "gap" in names else False
+    self.is_stepping_stones[env_ids] = (
+      ids == names.index("stepping_stones") if "stepping_stones" in names else False
+    )
     return super().reset(env_ids)
 
   def refresh_route(self):
@@ -71,7 +75,8 @@ class RouteVelocityCommand(UniformVelocityCommand):
     segment = goal[:, :2] - previous[:, :2]
     unit = segment / torch.linalg.vector_norm(segment, dim=-1, keepdim=True).clamp_min(1e-6)
     offset = pos[:, :2] - goal[:, :2]
-    near = torch.linalg.vector_norm(offset, dim=-1) < self.cfg.goal_radius
+    distance = torch.linalg.vector_norm(offset, dim=-1)
+    near = distance < self.cfg.goal_radius
     # Crossing a waypoint within the route corridor also counts. Limit forward
     # overshoot so a teleport past several obstacles cannot complete the route.
     along = (offset * unit).sum(-1)

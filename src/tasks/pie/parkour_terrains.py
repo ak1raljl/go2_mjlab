@@ -1,6 +1,6 @@
 """Route terrains inspired by Extreme Parkour and the PIE terrain families.
 
-Geometry and ordered support points are generated together. mjlab's named
+Geometry and ordered body-route points are generated together. mjlab's named
 patch transport applies the same tile/world transform to these explicit
 points; they are not randomly sampled flat patches.
 """
@@ -23,7 +23,7 @@ from .roughness import roughen_box_surfaces
 
 
 TerrainKind = Literal[
-  "flat", "hurdle", "step", "gap", "platform", "stairs_up", "stairs_down",
+  "flat", "stepping_stones", "step", "gap", "platform", "stairs_up", "stairs_down",
   "slope_up", "slope_down",
 ]
 ROUTE_POINTS = 8
@@ -49,13 +49,20 @@ def _place_obstacles(widths, start, end, min_gap, rng):
 class ParkourTerrainCfg(SubTerrainCfg):
   kind: TerrainKind = "flat"
   lateral_range: float = 0.35
-  hurdle_height_range: tuple[float, float] = (0.05, 0.75)
+  stone_diameter_range: tuple[float, float] = (0.24, 0.12)
+  """Nominal foot-sized cylinder diameter at difficulty zero and one."""
+  stone_spacing_range: tuple[float, float] = (0.32, 0.38)
+  """Nominal nearest-neighbour centre spacing of the staggered grid."""
+  stone_position_jitter_range: tuple[float, float] = (0.01, 0.025)
+  stone_height_jitter_range: tuple[float, float] = (0.005, 0.025)
+  stone_field_width: float = 2.4
+  stone_field_length_range: tuple[float, float] = (8.0, 10.0)
   platform_height_range: tuple[float, float] = (0.05, 0.75)
   step_height_range: tuple[float, float] = (0.03, 0.35)
   stair_height_range: tuple[float, float] = (0.03, 0.25)
   gap_width_range: tuple[float, float] = (0.10, 1.0)
   obstacle_min_spacing: float = 1.1
-  """Minimum clear ground between consecutive hurdles/gaps, in metres."""
+  """Minimum clear ground between consecutive gaps, in metres."""
   platform_count_range: tuple[int, int] = (1, 3)
   platform_length_range: tuple[float, float] = (1.4, 2.2)
   platform_min_spacing: float = 1.6
@@ -100,18 +107,57 @@ class ParkourTerrainCfg(SubTerrainCfg):
     goals[:, 1] = mid + rng.uniform(-self.lateral_range, self.lateral_range, ROUTE_POINTS)
     goals[[0, -1], 1] = mid
     height_profile = None
-    if self.kind != "gap":
+    if self.kind not in ("gap", "stepping_stones"):
       box(0, length, 0, width, 0)
 
-    if self.kind == "hurdle":
-      depth = 0.1 + 0.3 * difficulty
-      intervals = _place_obstacles(np.full(6, depth), 3.0, length - 2.0,
-                                   self.obstacle_min_spacing, rng)
-      for i, (left, right) in enumerate(intervals):
-        h = height(self.hurdle_height_range) * rng.uniform(0.8, 1.0)
-        y = goals[i + 1, 1]
-        box(left, right, y - 0.95, y + 0.95, h)
-        goals[i + 1, 0] = right + 0.65
+    if self.kind == "stepping_stones":
+      diameter = height(self.stone_diameter_range)
+      spacing = height(self.stone_spacing_range)
+      jitter = height(self.stone_position_jitter_range)
+      height_jitter = height(self.stone_height_jitter_range)
+      field_length = rng.uniform(*self.stone_field_length_range)
+      if (not all(np.isfinite(v) for v in (
+          diameter, spacing, jitter, height_jitter, field_length, self.stone_field_width,
+      )) or diameter <= 0 or jitter < 0 or height_jitter < 0
+          or spacing <= diameter * 1.1 + 2 * np.sqrt(2) * jitter
+          or not 2 * spacing < self.stone_field_width <= width
+          or not 2 * spacing < field_length <= length - 6.0):
+        raise ValueError("Invalid stone grid dimensions or insufficient inter-stone clearance.")
+      start = rng.uniform(3.0, length - 3.0 - field_length)
+      end = start + field_length
+      pit_depth = rng.uniform(0.6, 0.8)
+      if height_jitter >= pit_depth:
+        raise ValueError("Stone height jitter must keep every top above the pit floor.")
+      box(0, length, 0, width, -pit_depth, -pit_depth - 0.15)
+      box(0, start, 0, width, 0, bottom=-pit_depth)
+      box(end, length, 0, width, 0, bottom=-pit_depth)
+      # A triangular lattice supplies independent footholds for all four feet.
+      # Fit complete rows between the banks without widening the entry/exit gap.
+      row_pitch = np.sqrt(3) / 2 * spacing
+      rows = int(np.floor((field_length - spacing) / row_pitch)) + 1
+      xs = np.linspace(start + spacing / 2, end - spacing / 2, rows)
+      phase = rng.uniform(-spacing / 2, spacing / 2)
+      half_width = self.stone_field_width / 2
+      margin = diameter * 1.1 / 2 + jitter
+      for row, x in enumerate(xs):
+        ys = np.arange(-half_width - spacing, half_width + spacing, spacing)
+        ys += phase + (row % 2) * spacing / 2
+        ys = ys[np.abs(ys) <= half_width - margin] + mid
+        for y in ys:
+          radius = diameter / 2 * rng.uniform(0.9, 1.1)
+          xy = np.array([x, y]) + rng.uniform(-jitter, jitter, 2)
+          top = rng.uniform(-height_jitter, height_jitter)
+          # Solid cylinders meet the pit floor, avoiding exposed undersides.
+          geom = body.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+            pos=(xy[0], xy[1], (top - pit_depth) / 2),
+            size=(radius, (top + pit_depth) / 2, 0.0),
+            rgba=(0.45, 0.50, 0.55, 1.0),
+          )
+          geometries.append(TerrainGeometry(geom=geom))
+      # These are body-progress targets at nominal support elevation, not
+      # foothold labels. Targets may lie between posts; the policy chooses feet.
+      goals[:, 2] = 0.0
     elif self.kind == "gap":
       gap_width = height(self.gap_width_range)
       pit_depth = rng.uniform(0.5, 1.0)
@@ -222,7 +268,7 @@ PIE_PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       ),
     )
     for name, weight in {
-      "flat": 0.10, "hurdle": 0.15, "step": 0.15, "gap": 0.15,
+      "flat": 0.10, "stepping_stones": 0.15, "step": 0.15, "gap": 0.15,
       "platform": 0.15, "stairs_up": 0.10, "stairs_down": 0.10,
       "slope_up": 0.05, "slope_down": 0.05,
     }.items()

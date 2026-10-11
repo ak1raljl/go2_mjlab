@@ -84,7 +84,7 @@ class KeyboardController:
         self._pygame = _load_pygame()
         self._cmd_limits = cmd_limits
         self._pygame.init()
-        self._screen = self._pygame.display.set_mode((1280, 380) if depth else (200, 100))
+        self._screen = self._pygame.display.set_mode((864, 400) if depth else (200, 100))
         self._pygame.display.set_caption(
             "PIE Depth" if cmd_limits is None else (
                 "Go2 Keyboard Control / PIE Depth" if depth else "Go2 Keyboard Control"
@@ -106,7 +106,7 @@ class KeyboardController:
     def show_depth(
         self, raw: np.ndarray, history: np.ndarray, cutoff: float
     ) -> None:
-        """Display sensor metres and the exact cached policy frames for env 0."""
+        """Display sensor metres and the newest cached policy frame for env 0."""
         assert self._font is not None
         pygame = self._pygame
         pygame.event.pump()
@@ -122,7 +122,6 @@ class KeyboardController:
         )
         panels = (
             ("Raw depth (m), current sensor", raw, cutoff),
-            ("Policy depth [0, 1], oldest", history[0], 1.0),
             ("Policy depth [0, 1], newest", history[-1], 1.0),
         )
         for index, (title, values, maximum) in enumerate(panels):
@@ -145,10 +144,10 @@ class KeyboardController:
             )
             label(f"{w} x {h} | {limits}", x, 318)
         label(
-            f"Black=near, white=>={cutoff:g} m; magenta=invalid. "
-            "Policy frames hold between camera updates; CNN subtracts 0.5.",
+            f"Black=near, white=>={cutoff:g} m; magenta=invalid.",
             16, 350,
         )
+        label("Policy frame holds between camera updates; CNN subtracts 0.5.", 16, 372)
         pygame.display.flip()
 
 

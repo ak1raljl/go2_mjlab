@@ -38,7 +38,7 @@ controller converts the next terrain waypoint and a randomly sampled speed
 into these commands; no waypoint coordinates, heading labels or learned
 direction-prediction branch are added to the actor.
 
-Each 18 x 4 m tile supplies eight ordered support points. The training speed is sampled
+Each 18 x 4 m tile supplies eight ordered body-route points. The training speed is sampled
 from 0.3–1.2 m/s every six seconds, with lateral commands limited to ±0.35 m/s
 and yaw rate to ±1.2 rad/s. A waypoint counts after reaching/crossing it with
 foot support at the corresponding height. Completing all points ends the
@@ -50,7 +50,7 @@ failure or insufficient progress. Episodes last at most 40 seconds.
 | Terrain | Weight | Difficulty range |
 | --- | --- | --- |
 | `flat` | 10% | Ground with stronger surface roughness |
-| `hurdle` | 15% | Six randomly spaced hurdles, nominal height 0.05–0.75 m |
+| `stepping_stones` | 15% | Dense staggered foothold grid; nominal diameter 0.24→0.12 m, centre spacing 0.32→0.38 m |
 | `step` | 15% | Six terraces with random lengths, increments 0.03–0.35 m |
 | `gap` | 15% | Six randomly spaced gaps, width 0.10–1.0 m |
 | `platform` | 15% | Random 1–3 platforms, length 1.4–2.2 m, height 0.05–0.75 m |
@@ -59,21 +59,45 @@ failure or insufficient progress. Episodes last at most 40 seconds.
 | `slope_up` | 5% | Uphill ramp, inclination 5–25 degrees, length 4–6 m |
 | `slope_down` | 5% | Downhill counterpart |
 
-Hurdle/gap spacing varies within each tile, including at fixed difficulty.
-Placement preserves at least 1.1 m of clear ground between obstacles. Platform
+Gap spacing varies within each tile, including at fixed difficulty.
+Placement preserves at least 1.1 m of clear ground between gaps. Platform
 count, length, position and lateral offset are sampled per tile, with at least
 1.6 m between platforms. Every platform has a top waypoint and a landing
 waypoint; shorter routes add ground waypoints to retain eight valid points.
 Stair and slope starting positions also vary. Geometry is sampled when the
 terrain map is generated, not regenerated on every environment reset.
 
-The obstacle layout is built from smooth rectangular sections. Only flat
+Stepping stones replace the former `hurdle` terrain with hundreds of small
+solid cylinders in multiple staggered rows. The field is 2.4 m wide and
+8–10 m long, with random placement between two full-width banks. Difficulty
+shrinks the nominal foothold diameter from 0.24 to 0.12 m and increases
+nominal nearest-neighbour centre spacing from 0.32 to 0.38 m. Diameters vary
+by +/-10%; centre positions have independent +/-0.01→0.025 m jitter in X/Y.
+Post tops stay near bank height, with +/-0.005→0.025 m height jitter, so the
+challenge is placing individual feet rather than jumping the body onto tall
+platforms. Banks and posts extend to the 0.6–0.8 m deep pit floor; there is
+no walkable ground or added roughness between posts.
+
+Route targets guide the body through the field at nominal support height
+Z=0; they need not coincide with any pillar. Normal waypoint reach/crossing
+and foot-support checks apply. No target pillar or foothold is prescribed
+for any foot. The policy chooses individual foot placements from its existing
+visual/proprioceptive observations. Edit `stone_*` in `ParkourTerrainCfg`
+to change the geometry; terrain proportion and AMP weight remain 15%/0.004.
+Inspect every level with `python scripts/view_pie_terrains.py`, or select
+`--terrain stepping_stones --terrain-level 5` in `scripts/play_pie.py`.
+The new terrain name also appears in curriculum, reward and success logs;
+older checkpoints remain loadable but were not trained on these pillars.
+
+The obstacle layout uses smooth boxes and cylinders. Only flat
 terrain and slopes use solid MuJoCo heightfields with physical surface
 roughness. Slopes use continuous height profiles with roughness added.
-Hurdle, step, gap, platform and both stair types have no added roughness,
-including their ground sections, obstacle tops and gap bottoms. Spawn/goal
-heights follow the actual surface. These are adaptations, not identical Isaac Gym terrains.
-Hurdle/platform heights also have per-obstacle variation.
+Stepping stones, step, gap, platform and both stair types have no added roughness,
+including their ground sections, obstacle tops and gap bottoms. Spawn heights
+follow the actual surface; stepping-stone route goals use the nominal support
+plane between the independently perturbed post tops. These are adaptations,
+not identical Isaac Gym terrains.
+Platform heights also have per-obstacle variation.
 Gap banks extend continuously from the surface to the pit floor; there is no
 open cavity beneath the ground for a leg to enter. Gap widths, randomized
 spacing and route waypoints are independent of this bank depth.
@@ -103,7 +127,9 @@ Configure the angle and duration in `config/go2/parkour_env_cfg.py`.
 For both Parkour and Parkour-AMP, `gap_fall_height` terminates a gap episode
 when the robot root is more than **0.20 m below the current waypoint's Z**.
 This term only applies to gap tiles; set its `max_drop` parameter in the same
-configuration file. Base contact is penalized by the existing `collision`
+configuration file. `stepping_stones_fall_height` applies the same 0.20 m
+goal-relative drop threshold only to stepping-stone tiles, preventing pit-floor
+walking from completing the task. Base contact is penalized by the existing `collision`
 reward (weight **-10.0**, force threshold **0.1 N**) rather than causing a
 separate termination. This reward counts non-foot collision geometries,
 including the three base geometries; no extra base penalty is added.
@@ -117,7 +143,7 @@ python scripts/train.py Unitree-Go2-PIE-Parkour --gpu-ids '[0]' \
 Logs and checkpoints use `logs/rsl_rl/go2_pie_parkour/`. Terrain-level logs follow
 AMP Rough's convention: `Curriculum/terrain_levels` is the overall mean, and
 `Curriculum/terrain_levels/<terrain_name>` reports each of the nine terrain
-types (flat, hurdle, step, gap, platform, stairs_up/down and slope_up/down).
+types (flat, stepping_stones, step, gap, platform, stairs_up/down and slope_up/down).
 Each mean includes all environments assigned to that type, after the curriculum
 update, not just the environments resetting on that step. Types with no assigned
 environments are omitted instead of reporting a misleading zero.
@@ -163,7 +189,7 @@ Weights are per control step (default 0.02 s):
 | flat | 0.04 |
 | slope_up / slope_down | 0.02 |
 | stairs_up / stairs_down / step | 0.01 |
-| gap / hurdle / platform | 0.004 |
+| gap / stepping_stones / platform | 0.004 |
 
 Edit `PIEParkourAMPEnvCfg.amp_terrain_weights` in `amp_env.py` to tune them.
 Discriminator and replay settings live in `config/go2/amp_rl_cfg.py`.
@@ -393,10 +419,11 @@ including headless playback. Add `--keyboard` to override
 them with W/S, A/D and Q/E, or explicitly use `--command vx vy yaw` for a fixed
 command. `--keyboard` requires interactive playback and excludes `--command`.
 
-Add `--depth` for three panels in a separate window: environment 0's raw
-106 x 60 sensor depth in metres, and both 86 x 60 policy input frames
-(oldest/newest). Policy panels read the actual cached camera observation,
-including training's crop, invalid-depth replacement, Gaussian blur, clipping,
+Add `--depth` for two panels in a separate window: environment 0's raw
+sensor depth in metres (120 x 120 for Parkour, 106 x 60 for legacy PIE),
+and the newest 86 x 60 policy input frame. The policy panel reads the actual
+cached camera observation, including training's crop/resize,
+invalid-depth replacement, Gaussian blur, clipping,
 normalization and 10 Hz history updates. The CNN's internal subtraction of
 0.5 follows these displayed [0, 1] observations. Raw depth updates at the
 sensor rate, so it can change while policy frames are held. All panels use
