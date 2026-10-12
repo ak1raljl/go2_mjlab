@@ -4,7 +4,7 @@ import copy
 import math
 from dataclasses import fields, replace
 
-from mjlab.managers import CurriculumTermCfg, RewardTermCfg, SceneEntityCfg, TerminationTermCfg
+from mjlab.managers import CurriculumTermCfg, RewardTermCfg, TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 
 from src.tasks.pie import mdp
@@ -65,9 +65,9 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
     ),
   )
   cfg.rewards["track_linear_velocity"] = RewardTermCfg(
-    func=parkour.route_velocity_reward, weight=5.0,
+    func=parkour.route_velocity_reward, weight=1.5,
   )
-  cfg.rewards["route_goal"] = RewardTermCfg(func=parkour.route_goal_reward, weight=2.0)
+  cfg.rewards["route_goal"] = RewardTermCfg(func=parkour.route_goal_reward, weight=4.0)
   cfg.rewards["orientation"] = RewardTermCfg(func=parkour.parkour_orientation, weight=-1.0)
   cfg.rewards["lin_vel_z"] = RewardTermCfg(func=parkour.parkour_vertical_velocity, weight=-1.0)
   # Do not impose a fixed trot phase or standing height on jumping routes.
@@ -97,15 +97,6 @@ def unitree_go2_pie_parkour_env_cfg(play: bool = False) -> PIEParkourEnvCfg:
   cfg.terminations["route_failed"] = TerminationTermCfg(func=parkour.route_failed)
   cfg.terminations["gap_fall_height"] = TerminationTermCfg(
     func=parkour.gap_fall_height, params={"max_drop": 0.20},
-  )
-  cfg.terminations["stepping_stones_fall_height"] = TerminationTermCfg(
-    func=parkour.stepping_stones_foot_fall_height,
-    params={
-      "foot_cfg": SceneEntityCfg("robot", site_names=("FL", "FR", "RL", "RR")),
-      "max_drop": 0.20,
-      # Five control steps at 50 Hz = 0.1 s of continuous foot drop.
-      "consecutive_steps": 5,
-    },
   )
   cfg.curriculum = {} if play else {
     "terrain_levels": CurriculumTermCfg(func=parkour.route_curriculum),

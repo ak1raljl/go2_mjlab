@@ -271,7 +271,7 @@ PIE_PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       ),
     )
     for name, weight in {
-      "flat": 0.10, "stepping_stones": 0.15, "step": 0.15, "gap": 0.15,
+      "flat": 0.10, "step": 0.15, "gap": 0.15,
       "platform": 0.15, "stairs_up": 0.10, "stairs_down": 0.10,
       "slope_up": 0.05, "slope_down": 0.05,
     }.items()

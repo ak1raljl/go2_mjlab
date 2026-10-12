@@ -50,7 +50,6 @@ failure or insufficient progress. Episodes last at most 40 seconds.
 | Terrain | Weight | Difficulty range |
 | --- | --- | --- |
 | `flat` | 10% | Ground with stronger surface roughness |
-| `stepping_stones` | 15% | Dense staggered square-pillar grid; nominal side length 0.30→0.12 m, centre spacing 0.32→0.38 m (edge gap 0.02→0.26 m) |
 | `step` | 15% | Six terraces with random lengths, increments 0.03–0.35 m |
 | `gap` | 15% | Six randomly spaced gaps, width 0.10–1.0 m |
 | `platform` | 15% | Random 1–3 platforms, length 1.4–2.2 m, height 0.05–0.75 m |
@@ -67,38 +66,27 @@ waypoint; shorter routes add ground waypoints to retain eight valid points.
 Stair and slope starting positions also vary. Geometry is sampled when the
 terrain map is generated, not regenerated on every environment reset.
 
-Stepping stones replace the former `hurdle` terrain with hundreds of small
-solid square pillars in multiple staggered rows. The field is 2.4 m wide and
-8–10 m long, with random placement between two full-width banks. Difficulty
-shrinks the nominal pillar side length from 0.30 to 0.12 m and increases
-nominal nearest-neighbour centre spacing from 0.32 to 0.38 m, so the edge gap
-between neighbours grows from 0.02 m (easy; a foot can barely slip in) to
-0.26 m (hard). Side lengths vary by +/-10%; centre positions have independent
-+/-0.01→0.025 m jitter in X/Y. At the easiest levels neighbouring pillars may
-touch or slightly overlap, which merely merges the static geoms.
-Post tops stay near bank height, with +/-0.005→0.025 m height jitter, so the
-challenge is placing individual feet rather than jumping the body onto tall
-platforms. Banks and posts extend to the 0.6–0.8 m deep pit floor; there is
-no walkable ground or added roughness between posts.
+Stepping stones (`stepping_stones`, dense staggered square-pillar grid over a
+pit) is implemented in `parkour_terrains.py` but is currently **excluded from
+the training mix** in `PIE_PARKOUR_TERRAINS_CFG`: at the easiest level the
+curriculum could not bootstrap the skill, and fast routes kept wedging legs
+between pillars. To re-enable it, add `"stepping_stones": 0.15` back to the
+proportion dict, re-register the `stepping_stones_fall_height` termination
+(`parkour.stepping_stones_foot_fall_height`) in `config/go2/parkour_env_cfg.py`,
+and restore its `amp_terrain_weights` entry in `amp_env.py`.
 
-Route targets guide the body through the field at nominal support height
-Z=0; they need not coincide with any pillar. Normal waypoint reach/crossing
-and foot-support checks apply. No target pillar or foothold is prescribed
-for any foot. The policy chooses individual foot placements from its existing
-visual/proprioceptive observations. Edit `stone_*` in `ParkourTerrainCfg`
-to change the geometry; terrain proportion and AMP weight remain 15%/0.004.
-Inspect every level with `python scripts/view_pie_terrains.py`, or select
-`--terrain stepping_stones --terrain-level 5` in `scripts/play_pie.py`.
-The new terrain name also appears in curriculum, reward and success logs;
-older checkpoints remain loadable but were not trained on these pillars.
+Route targets guide the body through each tile; no target foothold is
+prescribed for any foot. The policy chooses individual foot placements from
+its existing visual/proprioceptive observations. Inspect every level with
+`python scripts/view_pie_terrains.py`, or select a single terrain and
+difficulty via `--terrain ... --terrain-level ...` in `scripts/play_pie.py`.
 
 The obstacle layout uses smooth boxes. Only flat
 terrain and slopes use solid MuJoCo heightfields with physical surface
 roughness. Slopes use continuous height profiles with roughness added.
-Stepping stones, step, gap, platform and both stair types have no added roughness,
+Step, gap, platform and both stair types have no added roughness,
 including their ground sections, obstacle tops and gap bottoms. Spawn heights
-follow the actual surface; stepping-stone route goals use the nominal support
-plane between the independently perturbed post tops. These are adaptations,
+follow the actual surface. These are adaptations,
 not identical Isaac Gym terrains.
 Platform heights also have per-obstacle variation.
 Gap banks extend continuously from the surface to the pit floor; there is no
@@ -130,18 +118,22 @@ Configure the angle and duration in `config/go2/parkour_env_cfg.py`.
 For both Parkour and Parkour-AMP, `gap_fall_height` terminates a gap episode
 when the robot root is more than **0.20 m below the current waypoint's Z**.
 This term only applies to gap tiles; set its `max_drop` parameter in the same
-configuration file. `stepping_stones_fall_height` checks the four foot sites
-FL/FR/RL/RR instead of the robot root: a stepping-stone episode ends only
-after any foot stays more than **0.20 m below the nominal support plane** for
-**5 consecutive control steps** (0.1 s at 50 Hz; set `consecutive_steps` in
-the same configuration file), so a brief slip that recovers does not
-terminate. For the current
-Z=0 route this is `foot_z < -0.20 m`; it does not require all four feet to fall.
-Base contact is penalized by the existing `collision`
+configuration file. Base contact is penalized by the existing `collision`
 reward (weight **-10.0**, force threshold **0.1 N**) rather than causing a
 separate termination. This reward counts non-foot collision geometries,
 including the three base geometries; no extra base penalty is added.
 Gap-height and fall terminations still apply in training and `play_pie.py`.
+
+Separately, `PIEEnv.step` guards against rare single-env physics explosions
+(e.g. a leg wedged between pillars while thrashing pushes `qpos`/`qvel` to
+NaN within one control step, faster than `fell_over`'s 0.5 s window can
+react). Such envs are treated as crashes: the physics state is sanitized,
+the env goes through the normal reset path, and PPO receives a clean
+post-reset observation with zero reward and `terminated=True`. The
+`Train/nan_env_resets` TensorBoard key counts these recoveries. A
+simultaneous failure of more than max(8, 5%) of the envs still raises,
+since that indicates a systemic bug rather than a sporadic contact
+explosion.
 
 ```bash
 python scripts/train.py Unitree-Go2-PIE-Parkour --gpu-ids '[0]' \
@@ -150,8 +142,8 @@ python scripts/train.py Unitree-Go2-PIE-Parkour --gpu-ids '[0]' \
 
 Logs and checkpoints use `logs/rsl_rl/go2_pie_parkour/`. Terrain-level logs follow
 AMP Rough's convention: `Curriculum/terrain_levels` is the overall mean, and
-`Curriculum/terrain_levels/<terrain_name>` reports each of the nine terrain
-types (flat, stepping_stones, step, gap, platform, stairs_up/down and slope_up/down).
+`Curriculum/terrain_levels/<terrain_name>` reports each of the eight terrain
+types (flat, step, gap, platform, stairs_up/down and slope_up/down).
 Each mean includes all environments assigned to that type, after the curriculum
 update, not just the environments resetting on that step. Types with no assigned
 environments are omitted instead of reporting a misleading zero.
@@ -197,7 +189,7 @@ Weights are per control step (default 0.02 s):
 | flat | 0.04 |
 | slope_up / slope_down | 0.02 |
 | stairs_up / stairs_down / step | 0.01 |
-| gap / stepping_stones / platform | 0.004 |
+| gap / platform | 0.004 |
 
 Edit `PIEParkourAMPEnvCfg.amp_terrain_weights` in `amp_env.py` to tune them.
 Discriminator and replay settings live in `config/go2/amp_rl_cfg.py`.

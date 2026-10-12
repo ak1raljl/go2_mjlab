@@ -1,5 +1,6 @@
 """PIE environment with a single noisy proprioceptive sample per step."""
 
+import math
 from dataclasses import dataclass
 
 import mujoco_warp as mjwarp
@@ -86,10 +87,75 @@ class PIEEnv(ManagerBasedRlEnv):
     self._in_step = True
     try:
       result = super().step(actions)
+      result = self._reset_nonfinite_envs(result)
     finally:
       self._in_step = False
     self._sync_proprioception(result[0])
     return result
+
+  def _reset_nonfinite_envs(self, result):
+    """Reset envs whose physics went NaN/Inf instead of crashing the run.
+
+    Rare contact explosions (e.g. a leg wedged between parkour pillars while
+    thrashing) can push qpos/qvel to NaN within one control step, before any
+    termination term can react. Treat those envs as terminated crashes:
+    sanitize the state, run the normal reset path and hand PPO a clean
+    post-reset observation with zero reward. A large simultaneous failure
+    means a systemic bug, so it still raises.
+    """
+    data = self.sim.data
+    finite = (
+      torch.isfinite(data.qpos).all(dim=-1)
+      & torch.isfinite(data.qvel).all(dim=-1)
+      & torch.isfinite(data.qacc).all(dim=-1)
+    )
+    if bool(finite.all()):
+      return result
+    bad_ids = (~finite).nonzero(as_tuple=False).flatten()
+    if len(bad_ids) > max(8, int(0.05 * self.num_envs)):
+      raise ValueError(
+        f"Non-finite physics in {len(bad_ids)}/{self.num_envs} envs at step "
+        f"{self.common_step_counter}; too many for a sporadic contact explosion."
+      )
+    obs, reward, terminated, time_outs, extras = result
+    print(
+      f"[WARNING] PIEEnv: non-finite physics in envs {bad_ids.tolist()} at step "
+      f"{self.common_step_counter}; resetting those envs."
+    )
+    # Sanitize the physics state first so the reset-path diagnostics (episode
+    # distance, terminal AMP state) read finite values.
+    self.sim.reset(bad_ids)
+    self.scene.reset(bad_ids)
+    self.scene.write_data_to_sim()
+    self.sim.forward()
+    # Count the crash as a termination for metrics and PPO bootstrapping.
+    self.termination_manager._terminated_buf[bad_ids] = True
+    previous_log = self.extras.get("log", {})
+    self._reset_idx(bad_ids)
+    self.scene.write_data_to_sim()
+    self.sim.forward()
+    # The NaN step's command update wrote non-finite values into persistent
+    # term state (vel_command_b, heading). A zero-dt compute re-derives them
+    # from the clean post-reset state without advancing resample timers.
+    self.command_manager.compute(dt=0.0)
+    self.sim.sense()
+    obs = self.observation_manager.compute(update_history=True)
+    self.obs_buf = obs
+    # Managers logged episode stats from the poisoned pre-reset state; scrub
+    # non-finite entries so TensorBoard never sees them.
+    log = {**self.extras.get("log", {}), **previous_log}
+    for key, value in log.items():
+      if isinstance(value, torch.Tensor):
+        log[key] = torch.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0)
+      elif isinstance(value, float) and not math.isfinite(value):
+        log[key] = 0.0
+    log["Train/nan_env_resets"] = float(len(bad_ids))
+    self.extras["log"] = log
+    reward = reward.clone()
+    reward[bad_ids] = 0.0
+    terminated = terminated.clone()
+    terminated[bad_ids] = True
+    return obs, reward, terminated, time_outs, extras
 
   def _reset_idx(self, env_ids=None):
     if getattr(self, "_in_step", False):
