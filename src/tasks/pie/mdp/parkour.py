@@ -17,7 +17,7 @@ def route_complete(env):
   return route.completed
 
 
-def route_failed(env):
+def route_failed(env, lane_width: float | None = None):
   route = route_term(env)
   route.refresh_route()
   pos = route.robot.data.root_link_pos_w
@@ -27,7 +27,8 @@ def route_failed(env):
   local_x = pos[:, 0] - origin[:, 0] + 1.0
   local_y = pos[:, 1] - origin[:, 1]
   outside = (local_x < 0.2) | (local_x > generator.size[0] - 0.2)
-  outside |= local_y.abs() > generator.size[1] / 2 - 0.15
+  width = generator.size[1] if lane_width is None else lane_width
+  outside |= local_y.abs() > width / 2 - 0.15
   # Goal-relative support height handles ascending and descending routes.
   fallen = pos[:, 2] < route.current_goal[:, 2] - 0.8
   return outside | fallen

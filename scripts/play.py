@@ -43,6 +43,34 @@ def _load_pygame() -> Any:
     return _PYGAME
 
 
+# Warm (near) to cool (far) palette for the depth display.  The stops are
+# linearly interpolated into a 256-entry LUT; invalid sensor pixels are
+# painted magenta instead.
+_DEPTH_COLORMAP_STOPS = (
+    (0.00, (140, 10, 40)),
+    (0.18, (214, 39, 40)),
+    (0.36, (255, 140, 30)),
+    (0.52, (250, 220, 80)),
+    (0.68, (120, 200, 190)),
+    (0.84, (60, 130, 200)),
+    (1.00, (35, 45, 130)),
+)
+_DEPTH_INVALID_RGB = (255, 0, 255)
+
+
+def _build_depth_colormap_lut() -> np.ndarray:
+    """Interpolate the depth palette stops into a 256-entry RGB lookup table."""
+    positions = np.asarray([stop for stop, _ in _DEPTH_COLORMAP_STOPS])
+    colors = np.asarray([color for _, color in _DEPTH_COLORMAP_STOPS], dtype=np.float64)
+    grid = np.linspace(0.0, 1.0, 256)
+    return np.stack(
+        [np.interp(grid, positions, colors[:, channel]) for channel in range(3)], axis=-1
+    ).round().astype(np.uint8)
+
+
+_DEPTH_COLORMAP_LUT = _build_depth_colormap_lut()
+
+
 def get_keyboard_command(
     keys: Any,
     cmd_limits: np.ndarray,
@@ -91,6 +119,7 @@ class KeyboardController:
             )
         )
         self._font = self._pygame.font.Font(None, 23) if depth else None
+        self._small_font = self._pygame.font.Font(None, 19) if depth else None
         if cmd_limits is not None:
             print("Keyboard control: W/S=vx, A/D=vy, Q/E=yaw")
 
@@ -104,50 +133,104 @@ class KeyboardController:
         self._pygame.quit()
 
     def show_depth(
-        self, raw: np.ndarray, history: np.ndarray, cutoff: float
+        self,
+        raw: np.ndarray,
+        history: np.ndarray,
+        cutoff: float,
+        update_period_steps: int = 5,
     ) -> None:
-        """Display sensor metres and the newest cached policy frame for env 0."""
-        assert self._font is not None
+        """Draw the raw sensor frame and every cached policy frame for env 0.
+
+        All panels share one fixed metric scale: warm colours are near, cool
+        colours are far (see the colour bar), and magenta marks invalid raw
+        pixels.  Policy frames are normalized to [0, 1] by the observation
+        pipeline as fractions of ``cutoff``, so every panel maps onto the same
+        [0, cutoff] metre range and colours stay comparable across panels.
+        """
+        assert self._font is not None and self._small_font is not None
         pygame = self._pygame
         pygame.event.pump()
+
+        # (title, colour-scale input, metres for stats) per panel, oldest first.
+        panels = [("Raw depth | current sensor", raw / cutoff, raw)]
+        for index in range(history.shape[0]):
+            age = history.shape[0] - 1 - index
+            when = "newest" if age == 0 else f"{age} update{'s' if age > 1 else ''} old"
+            frame = history[index]
+            panels.append((f"Policy input | {when}", frame, frame * cutoff))
+
+        margin, gap = 16, 16
+        panel_top, panel_h = 74, 260
+        widths = [
+            max(1, round(panel_h * values.shape[1] / values.shape[0]))
+            for _, values, _ in panels
+        ]
+        stats_y = panel_top + panel_h + 6
+        bar_label_y = stats_y + 22
+        bar_y = bar_label_y + 18
+        bar_h = 14
+        tick_y = bar_y + bar_h + 4
+        footer_y = tick_y + 20
+        width = 2 * margin + sum(widths) + gap * (len(panels) - 1)
+        height = footer_y + 22
+        if self._screen.get_size() != (width, height):
+            self._screen = pygame.display.set_mode((width, height))
         self._screen.fill((24, 24, 28))
 
-        def label(text: str, x: int, y: int) -> None:
-            self._screen.blit(self._font.render(text, True, (235, 235, 235)), (x, y))
+        def label(text: str, x: int, y: int, small: bool = False) -> None:
+            font = self._small_font if small else self._font
+            self._screen.blit(font.render(text, True, (235, 235, 235)), (x, y))
 
         label(
             "Environment 0 | W/S=vx, A/D=vy, Q/E=yaw (focus this window)"
-            if self._cmd_limits is not None else "Environment 0 | PIE depth visualization",
-            16, 10,
+            if self._cmd_limits is not None else "Environment 0 | PIE depth input",
+            margin, 10,
         )
-        panels = (
-            ("Raw depth (m), current sensor", raw, cutoff),
-            ("Policy depth [0, 1], newest", history[-1], 1.0),
-        )
-        for index, (title, values, maximum) in enumerate(panels):
-            x = 16 + index * 424
-            label(title, x, 42)
-            # Fixed display scale: never normalize each frame independently.
-            # Raw invalid pixels remain distinguishable from far-range returns.
-            valid = np.isfinite(values) & (values > 0)
-            scaled = np.clip(np.where(valid, values, 0.0) / maximum, 0.0, 1.0)
-            rgb = np.repeat((scaled * 255).astype(np.uint8)[..., None], 3, axis=-1)
-            rgb[~valid] = (255, 0, 255)
+        label("Warm = near, cool = far; magenta = invalid sensor return.", margin, 34, small=True)
+
+        x = margin
+        for (title, normalized, metres), panel_w in zip(panels, widths, strict=True):
+            label(title, x, panel_top - 20, small=True)
+            # Fixed metric scale for every panel: never normalize frames
+            # independently; raw invalid pixels stay distinct from far returns.
+            valid = np.isfinite(metres) & (metres > 0.0)
+            scaled = np.clip(np.where(valid, normalized, 0.0), 0.0, 1.0)
+            rgb = _DEPTH_COLORMAP_LUT[(scaled * 255).astype(np.uint8)]
+            rgb[~valid] = _DEPTH_INVALID_RGB
             surface = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
-            h, w = values.shape
-            zoom = min(408 / w, 240 / h)
-            surface = pygame.transform.scale(surface, (int(w * zoom), int(h * zoom)))
-            self._screen.blit(surface, (x, 72))
-            limits = (
-                f"min={values[valid].min():.3f}, max={values[valid].max():.3f}"
-                if valid.any() else "No valid depth"
+            surface = pygame.transform.scale(surface, (panel_w, panel_h))
+            self._screen.blit(surface, (x, panel_top))
+            stats = (
+                f"{metres[valid].min():.2f}/{metres[valid].mean():.2f}/"
+                f"{metres[valid].max():.2f} m | {valid.mean() * 100:.0f}% valid"
+                if valid.any() else "no valid return"
             )
-            label(f"{w} x {h} | {limits}", x, 318)
+            label(stats, x, stats_y, small=True)
+            x += panel_w + gap
+
+        bar_w = width - 2 * margin
         label(
-            f"Black=near, white=>={cutoff:g} m; magenta=invalid.",
-            16, 350,
+            f"Distance colour scale [0, {cutoff:g}] m | panel stats: min/mean/max",
+            margin, bar_label_y, small=True,
         )
-        label("Policy frame holds between camera updates; CNN subtracts 0.5.", 16, 372)
+        bar = np.repeat(_DEPTH_COLORMAP_LUT[None], bar_h, axis=0)
+        surface = pygame.surfarray.make_surface(bar.swapaxes(0, 1))
+        self._screen.blit(pygame.transform.scale(surface, (bar_w, bar_h)), (margin, bar_y))
+        ticks = np.arange(0.0, cutoff, 0.5)
+        if len(ticks) == 0 or ticks[-1] != cutoff:
+            ticks = np.append(ticks, cutoff)
+        for tick in ticks:
+            tick_x = margin + int(round(float(bar_w * tick / cutoff)))
+            pygame.draw.line(
+                self._screen, (235, 235, 235),
+                (tick_x, bar_y + bar_h), (tick_x, bar_y + bar_h + 3),
+            )
+            label(f"{tick:g}", tick_x - 6, tick_y, small=True)
+        label(
+            f"Policy frames update every {update_period_steps} control steps and hold "
+            "between updates; invalid raw pixels reach the policy as cutoff (far).",
+            margin, footer_y, small=True,
+        )
         pygame.display.flip()
 
 
@@ -268,6 +351,7 @@ class KeyboardCommandEnv:
             raw[0, ..., 0].detach().cpu().numpy(),
             history.detach().cpu().numpy(),
             params["cutoff_distance"],
+            params.get("update_period_steps", 5),
         )
 
     def get_observations(self) -> Any:
@@ -313,7 +397,7 @@ class PlayConfig:
     keyboard: bool = False
     """Use keyboard velocity commands instead of the environment's random commands."""
     depth: bool = False
-    """Show PIE raw depth and both processed policy frames in a separate window."""
+    """Show PIE raw depth and every cached processed policy frame in a separate window."""
     no_terminations: tyro.conf.FlagConversionOff[bool] = True
     headless_steps: int = 0
     command: tuple[float, float, float] | None = None

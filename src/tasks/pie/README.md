@@ -212,6 +212,10 @@ The dedicated playback entry is `scripts/play_pie.py`:
 # Defaults to route guidance with a speed sampled once at each reset.
 python scripts/play_pie.py --checkpoint-file <checkpoint.pt> --depth
 
+# Configure reset-only random speed, longer lanes and empty terrain separation.
+python scripts/play_pie.py --checkpoint-file <checkpoint.pt> \
+  --speed-range 0.3 1.2 --terrain-length 36 --terrain-gap 4 --depth
+
 # Direct user velocity control; no automatic route steering.
 python scripts/play_pie.py --checkpoint-file <checkpoint.pt> --keyboard --depth
 
@@ -238,7 +242,27 @@ bypass route advancement, so their statistics are not route success estimates.
 Add `--export` to explicitly write ONNX beside the checkpoint.
 
 Playback samples the route speed only on reset and holds it throughout the
-episode. Body-frame velocity components and yaw rate still follow the current
+episode, uniformly in `--speed-range` (default 0.3–1.2 m/s). An explicit
+`--speed` retains fixed-speed playback. Each playback lane defaults to 36 m
+long, with a 4 m empty lateral gap between adjacent terrain edges; change
+these using `--terrain-length` and `--terrain-gap` (zero restores adjacency).
+Parkour lanes repeat independently generated segments at approximately the
+original 18 m length, rather than stretching the original obstacle spacing.
+The default 36 m lane has two segments: 12 gaps instead of 6, two staircase
+or slope sections instead of one, and 16 ordered route goals instead of 8.
+A 54 m lane has three segments and 24 goals. Other lengths choose the nearest
+segment count while keeping each segment at least 17 m; for example, 35 m
+uses two 17.5 m segments. Segment boundaries align their centreline support
+heights, so repeated ascending/descending sections do not introduce a cliff
+at the join. This repetition applies to the Parkour task family; legacy PIE
+retains its own terrain generator.
+Lane widths, obstacle heights and gap-obstacle widths retain their original
+settings. Spawn points and all route goals move with their lane; the empty
+separation does not enlarge the valid route corridor. The default playback
+timeout is 120 seconds to accommodate the longer route at low speeds.
+Episode reports include the reference speed used before each reset.
+These layout and timeout changes apply only to this playback entry.
+Body-frame velocity components and yaw rate still follow the current
 route direction. Pushes and all startup randomization (friction, mass, COM,
 encoder bias, gains, motor strength and camera) are disabled; joint resets
 use the nominal pose and zero velocity. Only robot state reset and terrain
