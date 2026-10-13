@@ -67,6 +67,9 @@ class PIEOnPolicyRunner(MjlabOnPolicyRunner):
       }),
       "policy_outputs": json.dumps(["actions", "memory_h_out"]),
     })
+    if hasattr(actor, "policy_architecture"):
+      metadata["policy_architecture"] = actor.policy_architecture
+      metadata["attention_heads"] = str(actor.attention.num_heads)
     return metadata
 
   def save(self, path: str, infos=None):

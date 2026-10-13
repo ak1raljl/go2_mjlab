@@ -17,6 +17,7 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 import numpy as np
 import torch
 import tyro
+import yaml
 from mjlab.envs import mdp as env_mdp
 from mjlab.managers import EventTermCfg
 from mjlab.rl import RslRlVecEnvWrapper
@@ -37,7 +38,7 @@ from src.tasks.pie.mdp.route_command import RouteVelocityCommand
 @dataclass(frozen=True)
 class PlayPIEConfig:
     checkpoint_file: str
-    task: Literal["Unitree-Go2-PIE-Parkour", "Unitree-Go2-PIE-Parkour-AMP", "Unitree-Go2-PIE"] = "Unitree-Go2-PIE-Parkour"
+    task: Literal["Unitree-Go2-PIE-Parkour", "Unitree-Go2-PIE-Parkour-AMP", "Unitree-Go2-MTE-Parkour-AMP", "Unitree-Go2-PIE"] = "Unitree-Go2-PIE-Parkour"
     terrain: Literal["all", "flat", "step", "gap", "platform", "stairs_up", "stairs_down", "slope_up", "slope_down"] = "all"
     terrain_level: int = 0
     """Fixed difficulty from 0 (easy) to 9 (hard)."""
@@ -57,6 +58,8 @@ class PlayPIEConfig:
     video_length: int = 200
     export: bool = False
     """Write policy.onnx with velocity/depth metadata beside the checkpoint."""
+    attention_heads: int | None = None
+    """MTE head count; defaults to saved params/agent.yaml, otherwise eight."""
     stats_file: str | None = None
 
 
@@ -102,7 +105,22 @@ def run_play_pie(cfg: PlayPIEConfig) -> dict:
     configure_torch_backends()
     env_cfg = load_env_cfg(cfg.task, play=True)
     agent_cfg = load_rl_cfg(cfg.task)
-    if cfg.task == "Unitree-Go2-PIE-Parkour-AMP":
+    if cfg.task == "Unitree-Go2-MTE-Parkour-AMP":
+        params_file = checkpoint.parent / "params" / "agent.yaml"
+        saved_heads = None
+        if params_file.is_file():
+            # BaseLoader reads scalar strings only, including mjlab's tuple
+            # tags; it cannot construct arbitrary Python objects from YAML.
+            params = yaml.load(params_file.read_text(), Loader=yaml.BaseLoader)
+            saved_heads = int(params["actor"]["cnn_cfg"]["attention_heads"])
+        if cfg.attention_heads is not None and saved_heads is not None and cfg.attention_heads != saved_heads:
+            raise ValueError("--attention-heads disagrees with the checkpoint's saved training config.")
+        agent_cfg.actor.cnn_cfg["attention_heads"] = (
+            cfg.attention_heads if cfg.attention_heads is not None else saved_heads if saved_heads is not None else 8
+        )
+    elif cfg.attention_heads is not None:
+        raise ValueError("--attention-heads is only supported for the MTE task.")
+    if cfg.task in ("Unitree-Go2-PIE-Parkour-AMP", "Unitree-Go2-MTE-Parkour-AMP"):
         from src.tasks.pie.config.go2.rl_cfg import unitree_go2_pie_ppo_runner_cfg
 
         # Inference needs the PIE actor only, never expert data/discriminator/replay.
@@ -130,7 +148,7 @@ def run_play_pie(cfg: PlayPIEConfig) -> dict:
         "select_terrain": EventTermCfg(func=env_mdp.randomize_terrain, mode="reset"),
         **env_cfg.events,
     }
-    is_parkour = cfg.task in ("Unitree-Go2-PIE-Parkour", "Unitree-Go2-PIE-Parkour-AMP")
+    is_parkour = cfg.task in ("Unitree-Go2-PIE-Parkour", "Unitree-Go2-PIE-Parkour-AMP", "Unitree-Go2-MTE-Parkour-AMP")
     if cfg.speed is not None and not is_parkour:
         raise ValueError("--speed requires the parkour route task; use --command for legacy PIE.")
     direct_control = cfg.keyboard or cfg.command is not None

@@ -16,4 +16,5 @@ CLAUDE.md
 .agents
 .vscode
 .aws
-docs
+docs/*
+!docs/mte_parkour_amp.md

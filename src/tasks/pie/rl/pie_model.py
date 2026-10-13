@@ -129,21 +129,9 @@ class PIEActorModel(nn.Module):
     self.depth_encoder = self._make_depth_encoder(cfg)
     self.depth_token_norm = nn.LayerNorm(self.token_dim)
 
-    transformer_layer = nn.TransformerEncoderLayer(
-      d_model=self.token_dim,
-      nhead=int(cfg.get("attention_heads", 1)),
-      dim_feedforward=int(cfg.get("transformer_ff_dim", 256)),
-      dropout=float(cfg.get("transformer_dropout", 0.0)),
-      activation="gelu",
-      batch_first=True,
-      norm_first=False,
-    )
-    self.cross_modal_transformer = nn.TransformerEncoder(
-      transformer_layer,
-      num_layers=int(cfg.get("transformer_layers", 2)),
-    )
+    memory_input_dim = self._build_fusion(cfg)
     self.memory = nn.GRU(
-      input_size=2 * self.token_dim,
+      input_size=memory_input_dim,
       hidden_size=self.memory_hidden_dim,
       num_layers=self.memory_num_layers,
     )
@@ -189,6 +177,23 @@ class PIEActorModel(nn.Module):
       self.distribution.init_mlp_weights(self.mlp)
 
     self.memory_hidden: torch.Tensor | None = None
+
+  def _build_fusion(self, cfg: dict[str, Any]) -> int:
+    """Build fusion after both encoders; preserve PIE initialization order."""
+    transformer_layer = nn.TransformerEncoderLayer(
+      d_model=self.token_dim,
+      nhead=int(cfg.get("attention_heads", 1)),
+      dim_feedforward=int(cfg.get("transformer_ff_dim", 256)),
+      dropout=float(cfg.get("transformer_dropout", 0.0)),
+      activation="gelu",
+      batch_first=True,
+      norm_first=False,
+    )
+    self.cross_modal_transformer = nn.TransformerEncoder(
+      transformer_layer,
+      num_layers=int(cfg.get("transformer_layers", 2)),
+    )
+    return 2 * self.token_dim
 
   def forward(
     self,
