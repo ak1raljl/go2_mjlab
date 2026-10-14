@@ -70,6 +70,17 @@ _PIE_DEPTH_FOVY_RANDOM_RANGE = (
   - _PIE_DEPTH_FOVY_DEG,
 )
 
+# Sim-to-real depth augmentation suite, applied per captured frame in metric
+# space (see mdp.camera_depth).  Zero/max pixel failures replace MGDP's plain
+# dropout; all values follow RealSense-grade depth error magnitudes.
+_PIE_DEPTH_NOISE_GAUSSIAN = 0.03
+_PIE_DEPTH_PERLIN_NOISE = (0.02, 8)  # (amplitude m, grid cell px)
+_PIE_DEPTH_RANDOM_CONVOLUTION = 3  # kernel size
+_PIE_DEPTH_CLIP_RANGE = (1.5, 3.0)  # random far clip, metres
+_PIE_DEPTH_PIXEL_FAILURE_ZERO = 0.01
+_PIE_DEPTH_PIXEL_FAILURE_MAX = 0.01
+_PIE_DEPTH_SPATIAL_CROP = (0.25, 0.25)  # max rectangle h/w fraction
+
 # The manufacturer ranges allow a thigh to rotate into a mechanically valid but
 # unusable inverted-leg branch.  Keep the original lower limits and give PIE a
 # generous locomotion/stair upper limit that excludes that branch.
@@ -226,6 +237,15 @@ def unitree_go2_pie_env_cfg(play: bool = False) -> PIEEnvCfg:
             "crop_left": _PIE_DEPTH_CROP_LEFT,
             "crop_right": _PIE_DEPTH_CROP_RIGHT,
             "gaussian_blur": (3, 1.0),
+            # Sim-to-real augmentation suite, active in training and play
+            # alike so playback matches the training input distribution.
+            "noise_gaussian": _PIE_DEPTH_NOISE_GAUSSIAN,
+            "perlin_noise": _PIE_DEPTH_PERLIN_NOISE,
+            "random_convolution": _PIE_DEPTH_RANDOM_CONVOLUTION,
+            "depth_clip": _PIE_DEPTH_CLIP_RANGE,
+            "pixel_failure_zero": _PIE_DEPTH_PIXEL_FAILURE_ZERO,
+            "pixel_failure_max": _PIE_DEPTH_PIXEL_FAILURE_MAX,
+            "spatial_crop": _PIE_DEPTH_SPATIAL_CROP,
             "frame_history_length": 2,
             "update_period_steps": 5,
           },

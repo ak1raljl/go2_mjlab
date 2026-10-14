@@ -46,6 +46,20 @@ class PIEOnPolicyRunner(MjlabOnPolicyRunner):
       "depth_cutoff_m": str(depth["cutoff_distance"]),
       "depth_invalid_fill_m": str(depth["cutoff_distance"]),
       "depth_gaussian_blur": json.dumps(depth["gaussian_blur"]),
+      # Stochastic sim-to-real augmentation applied in simulation (training
+      # and play); deployment may skip it, so it is not in the processing order.
+      "depth_augmentation": json.dumps({
+        key: depth.get(key)
+        for key in (
+          "noise_gaussian", "perlin_noise",
+          "random_convolution", "depth_clip",
+          "pixel_failure_zero", "pixel_failure_max", "spatial_crop",
+        )
+      }),
+      "depth_augmentation_order": (
+        "gaussian,perlin,random-conv,depth-clip,zero-fail,max-fail,"
+        "spatial-crop (metric space, after blur, before clamp)"
+      ),
       "depth_normalization": "clamp(depth_m,min_m,cutoff_m)/cutoff_m",
       "depth_measurement": "range-along-unit-camera-ray-in-metres",
       "depth_centering": "subtract-0.5-inside-policy",

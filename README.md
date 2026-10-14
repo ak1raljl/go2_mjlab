@@ -86,8 +86,9 @@ Logs, checkpoints and the exported `policy.onnx` are written to
 
 ```bash
 python scripts/play.py Unitree-Go2-Flat --checkpoint-file logs/rsl_rl/go2_velocity/<run>/model_<step>.pt
-```
 
+python scripts/play_pie.py --checkpoint-file logs/rsl_rl/go2_pie//<run>/model_<step>.pt  --depth --terrain-level 6
+```
 Keyboard control: `W`/`S` forward/backward, `A`/`D` lateral, `Q`/`E` yaw.
 
 PIE uses two depth frames, ten steps of proprioception and a GRU. It defaults

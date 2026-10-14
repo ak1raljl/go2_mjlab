@@ -43,32 +43,10 @@ def _load_pygame() -> Any:
     return _PYGAME
 
 
-# Warm (near) to cool (far) palette for the depth display.  The stops are
-# linearly interpolated into a 256-entry LUT; invalid sensor pixels are
-# painted magenta instead.
-_DEPTH_COLORMAP_STOPS = (
-    (0.00, (140, 10, 40)),
-    (0.18, (214, 39, 40)),
-    (0.36, (255, 140, 30)),
-    (0.52, (250, 220, 80)),
-    (0.68, (120, 200, 190)),
-    (0.84, (60, 130, 200)),
-    (1.00, (35, 45, 130)),
-)
+# Grayscale palette matching the single-channel policy input: black is near,
+# white is far (>= cutoff).  Invalid sensor pixels are painted magenta instead.
+_DEPTH_LUT = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
 _DEPTH_INVALID_RGB = (255, 0, 255)
-
-
-def _build_depth_colormap_lut() -> np.ndarray:
-    """Interpolate the depth palette stops into a 256-entry RGB lookup table."""
-    positions = np.asarray([stop for stop, _ in _DEPTH_COLORMAP_STOPS])
-    colors = np.asarray([color for _, color in _DEPTH_COLORMAP_STOPS], dtype=np.float64)
-    grid = np.linspace(0.0, 1.0, 256)
-    return np.stack(
-        [np.interp(grid, positions, colors[:, channel]) for channel in range(3)], axis=-1
-    ).round().astype(np.uint8)
-
-
-_DEPTH_COLORMAP_LUT = _build_depth_colormap_lut()
 
 
 def get_keyboard_command(
@@ -138,40 +116,73 @@ class KeyboardController:
         history: np.ndarray,
         cutoff: float,
         update_period_steps: int = 5,
+        augmentation: str | None = None,
+        stages: list[tuple[str, np.ndarray]] | None = None,
     ) -> None:
         """Draw the raw sensor frame and every cached policy frame for env 0.
 
-        All panels share one fixed metric scale: warm colours are near, cool
-        colours are far (see the colour bar), and magenta marks invalid raw
-        pixels.  Policy frames are normalized to [0, 1] by the observation
-        pipeline as fractions of ``cutoff``, so every panel maps onto the same
-        [0, cutoff] metre range and colours stay comparable across panels.
+        All panels share one fixed metric scale in plain grayscale, matching
+        the single-channel values the policy receives: black is near, white
+        is far (see the scale bar), and magenta marks invalid raw pixels.
+        Policy frames are normalized to [0, 1] by the observation pipeline as
+        fractions of ``cutoff``, so every panel maps onto the same
+        [0, cutoff] metre range and stays comparable across panels.
+        ``augmentation`` is a short summary reported in the footer when the
+        policy input is augmented.  ``stages`` optionally reprocesses the
+        current frame with each augmentation term alone, shown on separate
+        top rows above the policy history.
         """
         assert self._font is not None and self._small_font is not None
         pygame = self._pygame
         pygame.event.pump()
 
-        # (title, colour-scale input, metres for stats) per panel, oldest first.
-        panels = [("Raw depth | current sensor", raw / cutoff, raw)]
+        # (title, gray-scale input, metres for stats) per panel, oldest first.
+        history_panels = []
         for index in range(history.shape[0]):
             age = history.shape[0] - 1 - index
             when = "newest" if age == 0 else f"{age} update{'s' if age > 1 else ''} old"
             frame = history[index]
-            panels.append((f"Policy input | {when}", frame, frame * cutoff))
+            history_panels.append((f"Policy input | {when}", frame, frame * cutoff))
+        raw_panel = ("Raw depth | current sensor", raw / cutoff, raw)
+        if stages:
+            # Top rows reprocess the current frame with each augmentation
+            # alone; the bottom row is the actual 10 Hz policy input history.
+            stage_panels = [
+                raw_panel,
+                *((title, frame, frame * cutoff) for title, frame in stages),
+            ]
+            max_per_row = 5
+            rows = [
+                stage_panels[i:i + max_per_row]
+                for i in range(0, len(stage_panels), max_per_row)
+            ]
+            rows.append(history_panels)
+        else:
+            rows = [[raw_panel, *history_panels]]
 
         margin, gap = 16, 16
-        panel_top, panel_h = 74, 260
-        widths = [
-            max(1, round(panel_h * values.shape[1] / values.shape[0]))
-            for _, values, _ in panels
+        panel_top = 74
+        panel_h = 200 if stages else 250
+        stats_h, row_gap, bar_h = 22, 34, 14
+        row_widths = [
+            [
+                max(1, round(panel_h * values.shape[1] / values.shape[0]))
+                for _, values, _ in row
+            ]
+            for row in rows
         ]
-        stats_y = panel_top + panel_h + 6
-        bar_label_y = stats_y + 22
+        width = 2 * margin + max(
+            sum(widths) + gap * (len(widths) - 1) for widths in row_widths
+        )
+        row_tops = []
+        y = panel_top
+        for _row in rows:
+            row_tops.append(y)
+            y += panel_h + stats_h + row_gap
+        bar_label_y = y - row_gap + 4
         bar_y = bar_label_y + 18
-        bar_h = 14
         tick_y = bar_y + bar_h + 4
         footer_y = tick_y + 20
-        width = 2 * margin + sum(widths) + gap * (len(panels) - 1)
         height = footer_y + 22
         if self._screen.get_size() != (width, height):
             self._screen = pygame.display.set_mode((width, height))
@@ -186,34 +197,36 @@ class KeyboardController:
             if self._cmd_limits is not None else "Environment 0 | PIE depth input",
             margin, 10,
         )
-        label("Warm = near, cool = far; magenta = invalid sensor return.", margin, 34, small=True)
+        label("Black = near, white = far; magenta = invalid sensor return.", margin, 34, small=True)
 
-        x = margin
-        for (title, normalized, metres), panel_w in zip(panels, widths, strict=True):
-            label(title, x, panel_top - 20, small=True)
-            # Fixed metric scale for every panel: never normalize frames
-            # independently; raw invalid pixels stay distinct from far returns.
-            valid = np.isfinite(metres) & (metres > 0.0)
-            scaled = np.clip(np.where(valid, normalized, 0.0), 0.0, 1.0)
-            rgb = _DEPTH_COLORMAP_LUT[(scaled * 255).astype(np.uint8)]
-            rgb[~valid] = _DEPTH_INVALID_RGB
-            surface = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
-            surface = pygame.transform.scale(surface, (panel_w, panel_h))
-            self._screen.blit(surface, (x, panel_top))
-            stats = (
-                f"{metres[valid].min():.2f}/{metres[valid].mean():.2f}/"
-                f"{metres[valid].max():.2f} m | {valid.mean() * 100:.0f}% valid"
-                if valid.any() else "no valid return"
-            )
-            label(stats, x, stats_y, small=True)
-            x += panel_w + gap
+        for row, widths, top in zip(rows, row_widths, row_tops, strict=True):
+            x = margin
+            stats_y = top + panel_h + 6
+            for (title, normalized, metres), panel_w in zip(row, widths, strict=True):
+                label(title, x, top - 20, small=True)
+                # Fixed metric scale for every panel: never normalize frames
+                # independently; raw invalid pixels stay distinct from far returns.
+                valid = np.isfinite(metres) & (metres > 0.0)
+                scaled = np.clip(np.where(valid, normalized, 0.0), 0.0, 1.0)
+                rgb = _DEPTH_LUT[(scaled * 255).astype(np.uint8)]
+                rgb[~valid] = _DEPTH_INVALID_RGB
+                surface = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
+                surface = pygame.transform.scale(surface, (panel_w, panel_h))
+                self._screen.blit(surface, (x, top))
+                stats = (
+                    f"{metres[valid].min():.2f}/{metres[valid].mean():.2f}/"
+                    f"{metres[valid].max():.2f} m | {valid.mean() * 100:.0f}% valid"
+                    if valid.any() else "no valid return"
+                )
+                label(stats, x, stats_y, small=True)
+                x += panel_w + gap
 
         bar_w = width - 2 * margin
         label(
-            f"Distance colour scale [0, {cutoff:g}] m | panel stats: min/mean/max",
+            f"Distance scale [0, {cutoff:g}] m | panel stats: min/mean/max",
             margin, bar_label_y, small=True,
         )
-        bar = np.repeat(_DEPTH_COLORMAP_LUT[None], bar_h, axis=0)
+        bar = np.repeat(_DEPTH_LUT[None], bar_h, axis=0)
         surface = pygame.surfarray.make_surface(bar.swapaxes(0, 1))
         self._screen.blit(pygame.transform.scale(surface, (bar_w, bar_h)), (margin, bar_y))
         ticks = np.arange(0.0, cutoff, 0.5)
@@ -226,11 +239,16 @@ class KeyboardController:
                 (tick_x, bar_y + bar_h), (tick_x, bar_y + bar_h + 3),
             )
             label(f"{tick:g}", tick_x - 6, tick_y, small=True)
-        label(
+        footer = (
             f"Policy frames update every {update_period_steps} control steps and hold "
-            "between updates; invalid raw pixels reach the policy as cutoff (far).",
-            margin, footer_y, small=True,
+            "between updates; invalid raw pixels reach the policy as cutoff (far)."
         )
+        if augmentation is not None:
+            footer += (
+                f" Depth augmentation: {augmentation};"
+                " top rows show each term alone on the current frame."
+            )
+        label(footer, margin, footer_y, small=True)
         pygame.display.flip()
 
 
@@ -347,11 +365,48 @@ class KeyboardCommandEnv:
         history = observations["camera"][0].reshape(
             params["frame_history_length"], height, width
         )
+        augmentation = None
+        stages = None
+        active = {
+            key: params.get(key)
+            for key in (
+                "noise_gaussian", "perlin_noise",
+                "random_convolution", "depth_clip",
+                "pixel_failure_zero", "pixel_failure_max", "spatial_crop",
+            )
+            if params.get(key) is not None
+        }
+        if active:
+            augmentation = f"{len(active)} terms active"
+            # Display-only decomposition: reprocess the current frame with
+            # each augmentation alone so its effect on the final network
+            # input is visible; the policy history stays the real input.
+            from src.tasks.pie.mdp.observations import camera_depth
+
+            pipeline = {
+                key: params[key]
+                for key in ("sensor_name", "cutoff_distance", "min_depth",
+                            "crop_left", "crop_right", "gaussian_blur", "resize")
+                if key in params
+            }
+            stage_defs = [("No augmentation", {})] + [
+                (f"+ {key.replace('_', ' ')}", {key: value})
+                for key, value in active.items()
+            ]
+            stages = [
+                (
+                    title,
+                    camera_depth(env, **pipeline, **aug)[0, 0].detach().cpu().numpy(),
+                )
+                for title, aug in stage_defs
+            ]
         self._depth_window.show_depth(
             raw[0, ..., 0].detach().cpu().numpy(),
             history.detach().cpu().numpy(),
             params["cutoff_distance"],
             params.get("update_period_steps", 5),
+            augmentation=augmentation,
+            stages=stages,
         )
 
     def get_observations(self) -> Any:

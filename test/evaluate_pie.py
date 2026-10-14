@@ -57,6 +57,15 @@ def main(cfg: Config) -> None:
     env_cfg.scene.num_envs = cfg.num_envs
     env_cfg.episode_length_s = cfg.episode_length_s
     env_cfg.observations["proprio_history"].enable_corruption = False
+    # Evaluation uses clean depth; the sim-to-real augmentation suite stays
+    # disabled here just like the proprio corruption above.
+    camera_params = env_cfg.observations["camera"].terms["front_depth"].params
+    for aug_key in (
+        "noise_gaussian", "perlin_noise",
+        "random_convolution", "depth_clip",
+        "pixel_failure_zero", "pixel_failure_max", "spatial_crop",
+    ):
+        camera_params[aug_key] = None
     env_cfg.curriculum = {}
     env_cfg.events.pop("push_robot", None)
     generator = env_cfg.scene.terrain.terrain_generator
