@@ -14,6 +14,7 @@ class PIEAMPOnPolicyRunner(PIEOnPolicyRunner):
     "Rewards/terrain/",
     "AMP/episode_contact_rate/",
     "AMP/episode_max_air_time_s/",
+    "Metrics/route_success/",
   )
 
   def __init__(self, *args, **kwargs):
