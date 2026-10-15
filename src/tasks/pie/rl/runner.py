@@ -51,14 +51,13 @@ class PIEOnPolicyRunner(MjlabOnPolicyRunner):
       "depth_augmentation": json.dumps({
         key: depth.get(key)
         for key in (
-          "noise_gaussian", "perlin_noise",
-          "random_convolution", "depth_clip",
-          "pixel_failure_zero", "pixel_failure_max", "spatial_crop",
+          "noise_gaussian", "perlin_noise", "random_convolution",
+          "pixel_failure_zero", "pixel_failure_max",
         )
       }),
       "depth_augmentation_order": (
-        "gaussian,perlin,random-conv,depth-clip,zero-fail,max-fail,"
-        "spatial-crop (metric space, after blur, before clamp)"
+        "gaussian,perlin,random-conv,zero-fail,max-fail "
+        "(metric space, after blur, before clamp)"
       ),
       "depth_normalization": "clamp(depth_m,min_m,cutoff_m)/cutoff_m",
       "depth_measurement": "range-along-unit-camera-ray-in-metres",

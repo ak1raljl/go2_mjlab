@@ -61,9 +61,8 @@ def main(cfg: Config) -> None:
     # disabled here just like the proprio corruption above.
     camera_params = env_cfg.observations["camera"].terms["front_depth"].params
     for aug_key in (
-        "noise_gaussian", "perlin_noise",
-        "random_convolution", "depth_clip",
-        "pixel_failure_zero", "pixel_failure_max", "spatial_crop",
+        "noise_gaussian", "perlin_noise", "random_convolution",
+        "pixel_failure_zero", "pixel_failure_max",
     ):
         camera_params[aug_key] = None
     env_cfg.curriculum = {}

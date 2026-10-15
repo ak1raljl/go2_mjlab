@@ -370,9 +370,8 @@ class KeyboardCommandEnv:
         active = {
             key: params.get(key)
             for key in (
-                "noise_gaussian", "perlin_noise",
-                "random_convolution", "depth_clip",
-                "pixel_failure_zero", "pixel_failure_max", "spatial_crop",
+                "noise_gaussian", "perlin_noise", "random_convolution",
+                "pixel_failure_zero", "pixel_failure_max",
             )
             if params.get(key) is not None
         }
